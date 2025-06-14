@@ -11,7 +11,7 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
   - Channels 4–6 → Chip 1 voices A/B/C  
   - Channels 7–9 → Chip 2 voices A/B/C  
 - **Pitch Bend & Vibrato**: Standard pitch bend (±2 semitones) and CC1 mod-wheel vibrato (±1 semitone) per channel.  
-- **Drum Noise Channels**: MIDI channels 10–12 trigger noise percussion on chips 0, 1, 2 respectively.  
+- **Drum Noise Channels**: MIDI channels 10 trigger noise percussion on chip 2.  
 - **LED Indicators**: LEDs light when each YM chip is active, with inverted logic (LOW = on).  
 - **74HC138 Decoder**: Selects among the three chips via A/B/C lines.  
 
