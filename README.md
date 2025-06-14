@@ -1,4 +1,4 @@
-# YM2149F Polyphonic Synth
+# YM2149F Polyphonic Synth - Turbo Sound x 3
 
 An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sound chips, complete with MIDI input, per-channel pitch bend and vibrato, noise-based drum channels, and LED indicators.
 
