@@ -54,6 +54,7 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 - Connect a USB-MIDI controller or TRS-MIDI cable.  
 - Send notes on channels 1–9 to play polyphonic voices.  
 - Use pitch bend wheel for ±2 semitone bends.  
-- Use mod wheel (CC1) for vibrato effect.  
+- Use mod wheel (CC1) for vibrato effect.
+- Expression (CC11)  
 - Send on MIDI channel 10 (Chip 3) for noise.  
 - LEDs will flash when each chip is active. 
