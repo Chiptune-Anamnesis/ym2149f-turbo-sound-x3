@@ -17,6 +17,10 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 
 ## Hardware
 
+<h1 align="center">
+    <img width="75%" src="ym2149f-tsx3.png">
+</h1>
+
 ### Components
 
 - Arduino Pro Micro (ATmega32U4, 5 V)  
