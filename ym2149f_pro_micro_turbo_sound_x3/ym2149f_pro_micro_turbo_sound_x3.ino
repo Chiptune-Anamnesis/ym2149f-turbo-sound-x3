@@ -83,14 +83,14 @@ void enableTones(uint8_t chip) {
 }
 
 void noiseOn(uint8_t note, uint8_t vel) {
-  uint8_t chip = 0;
-  uint8_t nf = constrain((int)note-24, 0, 31);
-  psgWrite(chip, 6, nf);
-  psgWrite(chip, 7, 0b11111000);
-  psgWrite(chip, 8+2, vel>>3);
+  uint8_t chip = 2;
+  uint8_t nf = constrain((int)note - 24, 2, 31);
+  psgWrite(chip, 6, nf);                 // noise period
+  psgWrite(chip, 7, 0b00011100);         // enable noise C, disable tone A/B/C, noise A/B
+  psgWrite(chip, 8+2, vel >> 3);         // volume on C
 }
 void noiseOff() {
-  uint8_t chip = 0;
+  uint8_t chip = 2;
   enableTones(chip);
   psgWrite(chip, 8+2, 0);
 }
