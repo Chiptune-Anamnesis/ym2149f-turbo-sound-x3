@@ -77,6 +77,7 @@ void setVoice(uint8_t chip, uint8_t voice, uint16_t period, uint8_t volume) {
 }
 void stopVoice(uint8_t chip, uint8_t voice) {
   setVoice(chip, voice, 0, 0);
+  voiceActive[chip][voice] = false;
 }
 void enableTones(uint8_t chip) {
   psgWrite(chip, 7, 0b00111000);
@@ -126,12 +127,32 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   uint8_t chip = midiToChip[ch];
   uint8_t vol  = vel >> 3;
 
-  int8_t v;
-  for (v=0; v<3; ++v)
-    if (!voiceActive[chip][v]) break;
-  if (v >=3) v = nextVoice[chip];
-  nextVoice[chip] = (v+1)%3;
+  int8_t v = -1;
+  for (int i = 0; i < 3; ++i) {
+    if (!voiceActive[chip][i]) {
+      v = i;
+      break;
+    }
+  }
 
+  if (v == -1) {
+    // All voices active, find one with same channel and stop it
+    for (int i = 0; i < 3; ++i) {
+      if (voiceChan[chip][i] == ch) {
+        stopVoice(chip, i);
+        v = i;
+        break;
+      }
+    }
+  }
+
+  if (v == -1) {
+    // Still not found? Steal next voice
+    v = nextVoice[chip];
+    stopVoice(chip, v);
+  }
+
+  nextVoice[chip] = (v+1)%3;
   voiceActive[chip][v] = true;
   voiceNote[chip][v]   = note;
   voiceChan[chip][v]   = ch;
@@ -146,8 +167,7 @@ void noteOff(uint8_t ch, uint8_t note) {
   if (ch == 9) { noiseOff(); return; }
   uint8_t chip = midiToChip[ch];
   for (int v=0; v<3; ++v) {
-    if (voiceActive[chip][v] && voiceNote[chip][v] == note) {
-      voiceActive[chip][v] = false;
+    if (voiceActive[chip][v] && voiceNote[chip][v] == note && voiceChan[chip][v] == ch) {
       stopVoice(chip, v);
       break;
     }
