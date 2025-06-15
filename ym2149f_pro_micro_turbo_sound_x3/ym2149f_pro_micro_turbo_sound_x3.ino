@@ -77,7 +77,6 @@ void setVoice(uint8_t chip, uint8_t voice, uint16_t period, uint8_t volume) {
 }
 void stopVoice(uint8_t chip, uint8_t voice) {
   setVoice(chip, voice, 0, 0);
-  voiceActive[chip][voice] = false;
 }
 void enableTones(uint8_t chip) {
   psgWrite(chip, 7, 0b00111000);
@@ -86,9 +85,9 @@ void enableTones(uint8_t chip) {
 void noiseOn(uint8_t note, uint8_t vel) {
   uint8_t chip = 2;
   uint8_t nf = constrain((int)note - 24, 2, 31);
-  psgWrite(chip, 6, nf);                 // noise period
-  psgWrite(chip, 7, 0b00011100);         // enable noise C, disable tone A/B/C, noise A/B
-  psgWrite(chip, 8+2, vel >> 3);         // volume on C
+  psgWrite(chip, 6, nf);
+  psgWrite(chip, 7, 0b00011100);
+  psgWrite(chip, 8+2, vel >> 3);
 }
 void noiseOff() {
   uint8_t chip = 2;
@@ -106,7 +105,7 @@ void updatePitchMod(uint8_t channel) {
     if (!voiceActive[chip][v] || voiceChan[chip][v] != channel) continue;
 
     float base = (float)noteToPeriod(voiceNote[chip][v]);
-    float tp = base / powf(2.0f, (pitchBendSemis[channel] + lfo)/12.0f);
+    float tp   = base / powf(2.0f, (pitchBendSemis[channel] + lfo)/12.0f);
 
     if (portamentoOn[channel]) {
       if (curPeriod[chip][v] == 0) curPeriod[chip][v] = tp;
@@ -117,6 +116,7 @@ void updatePitchMod(uint8_t channel) {
 
     uint8_t rawVol = voiceVol[chip][v];
     uint8_t expr   = expressionVal[channel];
+    if (expr == 0) expr = 127;  // treat zero as default full expression
     uint8_t vol    = (rawVol * expr + 63) / 127;
     setVoice(chip, v, (uint16_t)(curPeriod[chip][v] + 0.5f), vol);
   }
@@ -127,37 +127,18 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   uint8_t chip = midiToChip[ch];
   uint8_t vol  = vel >> 3;
 
-  int8_t v = -1;
-  for (int i = 0; i < 3; ++i) {
-    if (!voiceActive[chip][i]) {
-      v = i;
-      break;
-    }
-  }
-
-  if (v == -1) {
-    // All voices active, find one with same channel and stop it
-    for (int i = 0; i < 3; ++i) {
-      if (voiceChan[chip][i] == ch) {
-        stopVoice(chip, i);
-        v = i;
-        break;
-      }
-    }
-  }
-
-  if (v == -1) {
-    // Still not found? Steal next voice
-    v = nextVoice[chip];
-    stopVoice(chip, v);
-  }
-
+  int8_t v;
+  for (v=0; v<3; ++v)
+    if (!voiceActive[chip][v]) break;
+  if (v >=3) v = nextVoice[chip];
   nextVoice[chip] = (v+1)%3;
+
   voiceActive[chip][v] = true;
   voiceNote[chip][v]   = note;
   voiceChan[chip][v]   = ch;
   voiceVol[chip][v]    = vol;
-  if (!portamentoOn[ch]) curPeriod[chip][v] = 0;
+  // always reset period so CC65 toggles and CC5 changes re-init slide
+  curPeriod[chip][v] = 0;
 
   updatePitchMod(ch);
   digitalWrite(CHIP_LED[chip], LED_ON);
@@ -167,7 +148,8 @@ void noteOff(uint8_t ch, uint8_t note) {
   if (ch == 9) { noiseOff(); return; }
   uint8_t chip = midiToChip[ch];
   for (int v=0; v<3; ++v) {
-    if (voiceActive[chip][v] && voiceNote[chip][v] == note && voiceChan[chip][v] == ch) {
+    if (voiceActive[chip][v] && voiceNote[chip][v] == note) {
+      voiceActive[chip][v] = false;
       stopVoice(chip, v);
       break;
     }
@@ -187,21 +169,53 @@ static uint8_t serStatus, serD1;
 
 void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
   uint8_t cmd = status & 0xF0, ch = status & 0x0F;
-  if      (cmd==0x90 && d2>0)               noteOn(ch,d1,d2);
-  else if (cmd==0x80 || (cmd==0x90 && d2==0)) noteOff(ch,d1);
-  else if (cmd==0xB0 && d1==1)               modWheel[ch]      = d2;
-  else if (cmd==0xB0 && d1==5)               portamentoSpeed[ch] = constrain(d2 / 127.0f, 0.005f, 0.5f);
-  else if (cmd==0xB0 && d1==11)              expressionVal[ch] = d2;
-  else if (cmd==0xB0 && d1==65)              portamentoOn[ch]  = (d2 >= 64);
-  else if (cmd==0xE0)                        pitchBend(ch,d1,d2);
+  if (cmd == 0x90 && d2 > 0) {
+    noteOn(ch, d1, d2);
+  } else if (cmd == 0x80 || (cmd == 0x90 && d2 == 0)) {
+    noteOff(ch, d1);
+  } else if (cmd == 0xB0 && ch < 9) {
+    switch (d1) {
+      case 1: // Mod Wheel
+        modWheel[ch] = d2;
+        updatePitchMod(ch);
+        break;
+      case 5: // Portamento Time
+        portamentoSpeed[ch] = constrain(d2 / 127.0f, 0.005f, 0.5f);
+        updatePitchMod(ch);
+        break;
+      case 11: // Expression
+        expressionVal[ch] = d2;
+        updatePitchMod(ch);
+        break;
+      case 65: // Portamento On/Off
+        portamentoOn[ch] = (d2 >= 64);
+        // reset period for active voices
+        for (int v = 0; v < 3; ++v) {
+          if (voiceActive[midiToChip[ch]][v] && voiceChan[midiToChip[ch]][v] == ch) {
+            curPeriod[midiToChip[ch]][v] = 0;
+          }
+        }
+        updatePitchMod(ch);
+        break;
+      case 120: // All Sound Off
+      case 123: // All Notes Off
+        for (int v = 0; v < 3; ++v) {
+          if (voiceActive[midiToChip[ch]][v] && voiceChan[midiToChip[ch]][v] == ch) {
+            stopVoice(midiToChip[ch], v);
+            voiceActive[midiToChip[ch]][v] = false;
+          }
+        }
+        break;
+    }
+  } else if (cmd == 0xE0) {
+    pitchBend(ch, d1, d2);
+  }
 }
 
 void parseSerialMidi(uint8_t b) {
-  if (b & 0x80) {
-    serStatus = b; serState = WAIT_D1;
-  } else if (serState == WAIT_D1) {
-    serD1 = b; serState = WAIT_D2;
-  } else if (serState == WAIT_D2) {
+  if (b & 0x80) { serStatus = b; serState = WAIT_D1; }
+  else if (serState == WAIT_D1) { serD1 = b; serState = WAIT_D2; }
+  else if (serState == WAIT_D2) {
     handleMidiMsg(serStatus, serD1, b);
     serState = WAIT_D1;
   }
@@ -214,20 +228,14 @@ void setup() {
   pinMode(PIN_ENABLE, OUTPUT); digitalWrite(PIN_ENABLE, HIGH);
 
   for (uint8_t i=0; i<3; i++) {
-    pinMode(CHIP_LED[i], OUTPUT);
-    digitalWrite(CHIP_LED[i], LED_OFF);
+    pinMode(CHIP_LED[i], OUTPUT); digitalWrite(CHIP_LED[i], LED_OFF);
   }
   for (uint8_t i=0; i<3; i++) {
-    digitalWrite(CHIP_LED[i], LED_ON);
-    delay(200);
-    digitalWrite(CHIP_LED[i], LED_OFF);
-    delay(100);
+    digitalWrite(CHIP_LED[i], LED_ON); delay(200);
+    digitalWrite(CHIP_LED[i], LED_OFF); delay(100);
   }
 
-  for (uint8_t c=0; c<3; c++) {
-    enableTones(c);
-    for (uint8_t v=0; v<3; v++) stopVoice(c,v);
-  }
+  for (uint8_t c=0; c<3; c++) { enableTones(c); for(uint8_t v=0;v<3;v++) stopVoice(c,v); }
 
   Serial1.begin(31250);
 }
@@ -245,6 +253,5 @@ void loop() {
   while ((rx = MidiUSB.read()).header)
     handleMidiMsg(rx.byte1, rx.byte2, rx.byte3);
 
-  while (Serial1.available())
-    parseSerialMidi(Serial1.read());
+  while (Serial1.available()) parseSerialMidi(Serial1.read());
 }
