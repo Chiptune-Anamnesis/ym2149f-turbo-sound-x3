@@ -18,7 +18,7 @@ const uint8_t PIN_SEL_B     = A1;
 const uint8_t PIN_SEL_C     = A0;
 const uint8_t PIN_ENABLE    = A2;
 // LEDs per chip
-const uint8_t CHIP_LED[3]   = {16,14,15};
+const uint8_t CHIP_LED[3]   = {15,14,16};
 // Map MIDI channels 0–8 to chips 0–2
 const uint8_t midiToChip[9] = {0,0,0, 1,1,1, 2,2,2};
 const float   YM_CLOCK_HZ   = 500000.0f;
