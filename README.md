@@ -61,6 +61,7 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 - Use pitch bend wheel for ±2 semitone bends.  
 - Use mod wheel (CC1) for vibrato effect.
 - Expression (CC11)
+- Expression Value (CC7)
 - Portamento (CC65) > 64
 - Portamento Time (CC5)  
 - Send on MIDI channel 10 (Chip 3) for noise.  
