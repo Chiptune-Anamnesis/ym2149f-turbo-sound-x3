@@ -5,10 +5,10 @@
 #include <math.h>
 
 // Toggle YM file streaming via USB CDC
-#define USE_YMPLAYER_SERIAL 1
+#define USE_YMPLAYER_SERIAL 0
 
 #if USE_YMPLAYER_SERIAL
-#include "YMPlayerSerial.h"  // Trash80 YM file streamer
+#include "YMPlayerSerial.h"
 #endif
 
 #define LED_ON  LOW
