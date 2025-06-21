@@ -1,10 +1,15 @@
-// Ym2149Synth.ino — YM2149F MIDI + LED inverted logic + Vibrato + Noise Drum on Channel 10
-// + Expression (CC11) + Channel Volume (CC7) + Portamento (CC65) + Portamento Time (CC5)
-// Arduino Pro Micro + 3 YM2149F chips + 74HC138 addressing
+// Ym2149Synth.ino — YM2149F MIDI + CC support + LED feedback + optional YMPlayerSerial
 
 #include <Arduino.h>
 #include <MIDIUSB.h>
 #include <math.h>
+
+// Toggle YM file streaming via USB CDC
+#define USE_YMPLAYER_SERIAL 1
+
+#if USE_YMPLAYER_SERIAL
+#include "YMPlayerSerial.h"  // Trash80 YM file streamer
+#endif
 
 #define LED_ON  LOW
 #define LED_OFF HIGH
@@ -22,6 +27,10 @@ const uint8_t CHIP_LED[3]   = {15,14,16};
 // Map MIDI channels 0–8 to chips 0–2
 const uint8_t midiToChip[9] = {0,0,0, 1,1,1, 2,2,2};
 const float   YM_CLOCK_HZ   = 500000.0f;
+
+#if USE_YMPLAYER_SERIAL
+YMPlayerSerial player;
+#endif
 
 // Synthesis state
 float   modWheel[9]        = {0};
@@ -186,32 +195,83 @@ void parseSerialMidi(uint8_t b) {
   else if (serState==WAIT_D2) { handleMidiMsg(serStatus,serD1,b); serState=WAIT_D1; }
 }
 
-void setup() {
-  for (auto p: DATA_PINS) pinMode(p, OUTPUT);
-  pinMode(PIN_BC1,OUTPUT); pinMode(PIN_BDIR,OUTPUT);
-  pinMode(PIN_SEL_A,OUTPUT); pinMode(PIN_SEL_B,OUTPUT); pinMode(PIN_SEL_C,OUTPUT);
-  pinMode(PIN_ENABLE,OUTPUT); digitalWrite(PIN_ENABLE,HIGH);
-  for (uint8_t i=0;i<3;i++){ pinMode(CHIP_LED[i],OUTPUT); digitalWrite(CHIP_LED[i],LED_OFF);}  
-  for (uint8_t i=0;i<3;i++){ digitalWrite(CHIP_LED[i],LED_ON); delay(200); digitalWrite(CHIP_LED[i],LED_OFF); delay(100);}  
-  for (uint8_t c=0;c<3;c++){ enableTones(c); for (uint8_t v=0;v<3;v++) stopVoice(c,v);}  
-  pinMode(0,INPUT_PULLUP);
-  Serial1.begin(31250);
-}
-
 void loop() {
-  while (Serial1.available()) parseSerialMidi(Serial1.read());
-  // Turn off LEDs after timeout
+  while (Serial1.available()) {
+    parseSerialMidi(Serial1.read());
+  }
+
+  // Turn off LEDs after flash timeout
   unsigned long now = millis();
-  for (uint8_t c=0; c<3; c++) {
-    if (ledOnTime[c] && now - ledOnTime[c] >= ledFlashMs) {
-      digitalWrite(CHIP_LED[c],LED_OFF);
+  for (uint8_t c = 0; c < 3; ++c) {
+    if (ledOnTime[c] && (now - ledOnTime[c] >= ledFlashMs)) {
+      digitalWrite(CHIP_LED[c], LED_OFF);
       ledOnTime[c] = 0;
     }
   }
-  // USB MIDI
+
+#if !USE_YMPLAYER_SERIAL
+  // Handle USB MIDI (only when not streaming)
   midiEventPacket_t rx;
-  while ((rx = MidiUSB.read()).header) handleMidiMsg(rx.byte1,rx.byte2,rx.byte3);
-  // Periodic pitch updates
-  static unsigned long t=millis();
-  if (millis()-t>=5) { t=millis(); for (uint8_t ch=0; ch<9; ++ch) updatePitchMod(ch);}  
+  while ((rx = MidiUSB.read()).header) {
+    handleMidiMsg(rx.byte1, rx.byte2, rx.byte3);
+  }
+#else
+  // Process YM file streaming
+  player.update();
+#endif
+
+  // Periodic pitch modulation updates (~ every 5ms)
+  static unsigned long last = millis();
+  unsigned long m = millis();
+  if (m - last >= 5) {
+    last = m;
+    for (uint8_t ch = 0; ch < 9; ++ch) {
+      updatePitchMod(ch);
+    }
+  }
 }
+
+
+
+void setup() {
+  // Initialize PSG bus pins
+  for (auto p: DATA_PINS) pinMode(p, OUTPUT);
+  pinMode(PIN_BC1, OUTPUT);
+  pinMode(PIN_BDIR, OUTPUT);
+  pinMode(PIN_SEL_A, OUTPUT);
+  pinMode(PIN_SEL_B, OUTPUT);
+  pinMode(PIN_SEL_C, OUTPUT);
+  pinMode(PIN_ENABLE, OUTPUT);
+  digitalWrite(PIN_ENABLE, HIGH);
+
+  // Initialize activity LEDs
+  for (uint8_t i = 0; i < 3; ++i) {
+    pinMode(CHIP_LED[i], OUTPUT);
+    digitalWrite(CHIP_LED[i], LED_OFF);
+  }
+  // Startup blink sequence
+  for (uint8_t i = 0; i < 3; ++i) {
+    digitalWrite(CHIP_LED[i], LED_ON);
+    delay(200);
+    digitalWrite(CHIP_LED[i], LED_OFF);
+    delay(100);
+  }
+
+  // Reset all voices
+  for (uint8_t c = 0; c < 3; ++c) {
+    enableTones(c);
+    for (uint8_t v = 0; v < 3; ++v)
+      stopVoice(c, v);
+  }
+
+  // Enable RX1 pull-up for TRS MIDI input
+  pinMode(0, INPUT_PULLUP);
+  Serial1.begin(31250);
+
+#if USE_YMPLAYER_SERIAL
+  // Start USB-CDC for YM file streaming
+  Serial.begin(115200);
+  player.begin();
+#endif
+}
+
