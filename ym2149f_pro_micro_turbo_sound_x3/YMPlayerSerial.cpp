@@ -32,20 +32,22 @@ void YMPlayerSerialClass::begin() {
 // Non-blocking update: read full YM packets (17 bytes) and apply at PSG
 void YMPlayerSerialClass::update() {
     const int packetSize = 17;
-    // Only proceed if a full packet is waiting
-    if (Serial.available() >= packetSize) {
-        uint8_t buffer[packetSize];
-        Serial.readBytes((char*)buffer, packetSize);
+    if (Serial.available() < packetSize) return;
 
-        uint8_t chip = buffer[0];
-        if (chip > 2) return;
+    uint8_t buffer[packetSize];
+    Serial.readBytes((char*)buffer, packetSize);
 
-        // Toggle activity LED on YM chip
-        Ym.setLED(chip, !Ym.getLED(chip));
+    uint8_t chip = buffer[0];
+    if (chip > 2) return;
 
-        // Write PSG registers
-        for (int i = 0; i < 14; ++i) {
-            Ym.write(chip, i, buffer[i + 1] & regMask[i]);
-        }
+    // **reverse** the chip index so it matches your 74HC138 wiring
+    chip = 2 - chip;
+
+    // toggle activity LED
+    Ym.setLED(chip, !Ym.getLED(chip));
+
+    // now write registers to the *correct* physical chip*
+    for (int i = 0; i < 14; ++i) {
+        Ym.write(chip, i, buffer[i + 1] & regMask[i]);
     }
 }
