@@ -5,7 +5,7 @@
 #include <math.h>
 
 // Toggle YM file streaming via USB CDC
-#define USE_YMPLAYER_SERIAL 0
+#define USE_YMPLAYER_SERIAL 1
 
 #if USE_YMPLAYER_SERIAL
 #include "YMPlayerSerial.h"
@@ -69,10 +69,13 @@ void busWrite(uint8_t val) {
     digitalWrite(DATA_PINS[i], (val>>i)&1);
 }
 void selectYM(uint8_t chip) {
+  chip = 2 - chip;
+
   digitalWrite(PIN_SEL_A, chip & 1);
-  digitalWrite(PIN_SEL_B, (chip>>1) & 1);
-  digitalWrite(PIN_SEL_C, (chip>>2) & 1);
+  digitalWrite(PIN_SEL_B, (chip >> 1) & 1);
+  digitalWrite(PIN_SEL_C, (chip >> 2) & 1);
 }
+
 void psgWrite(uint8_t chip, uint8_t reg, uint8_t val) {
   selectYM(chip);
   busWrite(reg & 0x1F);
