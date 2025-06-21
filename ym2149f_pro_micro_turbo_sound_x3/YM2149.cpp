@@ -44,6 +44,8 @@ void YM2149Class::busWrite(uint8_t val)
 
 void YM2149Class::selectYM(uint8_t chip)
 {
+    chip = 2 - chip;
+
     digitalWrite(PIN_SEL_A, chip & 0x01);
     digitalWrite(PIN_SEL_B, (chip >> 1) & 0x01);
     digitalWrite(PIN_SEL_C, (chip >> 2) & 0x01);
