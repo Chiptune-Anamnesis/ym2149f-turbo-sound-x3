@@ -1,14 +1,78 @@
 #include "YM2149.h"
+#include <util/atomic.h>
+#include <avr/io.h>  // Required for direct port manipulation macros
 
-const uint8_t YM2149Class::DATA_PINS[8] = {2, 3, 4, 5, 6, 7, 8, 9};
-const uint8_t YM2149Class::PIN_BC1      = 10;
-const uint8_t YM2149Class::PIN_BDIR     = 20;
-const uint8_t YM2149Class::PIN_SEL_A    = A3;
-const uint8_t YM2149Class::PIN_SEL_B    = A1;
-const uint8_t YM2149Class::PIN_SEL_C    = A0;
-const uint8_t YM2149Class::PIN_ENABLE   = A2;
-const uint8_t YM2149Class::CHIP_LED[3]  = {15, 14, 16};
+constexpr uint8_t LED_BIT[3] = {
+    _BV(PB1),  // D15 → PB1 
+    _BV(PB3),  // D14 → PB3
+    _BV(PB2)   // D16 → PB2
+};
 
+#ifdef DIRECT_WRITE
+void YM2149Class::begin()
+{
+    DDRD |= _BV(PD0) | _BV(PD1) | _BV(PD4) | _BV(PD7); // D2, D3, D4, D6
+    DDRB |= _BV(PB4) | _BV(PB5);                       // D8, D9
+    DDRC |= _BV(PC6);                                  // D5
+    DDRE |= _BV(PE6);                                  // D7
+
+    // --- Control pins ---
+    // BC1 = D10 → PB6
+    // BDIR = D20 → PF5
+    DDRB |= _BV(PB6);
+    DDRF |= _BV(PF5);
+    PORTB &= ~_BV(PB6);
+    PORTF &= ~_BV(PF5);
+
+    // --- Control lines ---
+    DDRB |= _BV(PB6);         // BC1 (D10) = OUTPUT
+    DDRF |= _BV(PF5);         // BDIR (D20) = OUTPUT
+
+    PORTB &= ~_BV(PB6);       // BC1 LOW
+    PORTF &= ~_BV(PF5);       // BDIR LOW
+
+    // --- Chip select lines ---
+    DDRF |= _BV(PF4) | _BV(PF6) | _BV(PF7);  // SEL_A (A3), SEL_B (A1), SEL_C (A0)
+    PORTF &= ~(_BV(PF4) | _BV(PF6) | _BV(PF7)); // Set all low initially
+
+    // --- ENABLE pin (A2 = PF5) ---
+    PORTF |= _BV(PF5);        // Drive high to enable chips
+
+    // --- LED pins (PB1, PB3, PB2 = D15, D14, D16) ---
+    DDRB |= _BV(PB1) | _BV(PB3) | _BV(PB2);   // Set as outputs
+    PORTB |= _BV(PB1) | _BV(PB2) | _BV(PB3);  // Set HIGH = OFF if active LOW LEDs
+}
+
+void YM2149Class::write(uint8_t chip, uint8_t reg, uint8_t val)
+{
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+    {
+        if (chip != currentChip)
+        {
+            selectYM(chip);
+            currentChip = chip;
+        }
+
+        busWrite(reg & 0x1F);
+        PORTB |= _BV(PB6);   // BC1 = HIGH
+        PORTF |= _BV(PF5);   // BDIR = HIGH
+
+        // Give the YM2149 time to latch register number
+        _NOP(); _NOP(); _NOP(); _NOP(); // 4 cycles ≈ 250 ns
+
+        PORTF &= ~_BV(PF5);  // BDIR = LOW
+        PORTB &= ~_BV(PB6);  // BC1 = LOW
+
+        _NOP(); _NOP(); _NOP(); _NOP(); // inter-phase delay
+
+        busWrite(val);
+        PORTF |= _BV(PF5);   // BDIR = HIGH
+        _NOP(); _NOP(); _NOP(); _NOP();
+        PORTF &= ~_BV(PF5);  // BDIR = LOW
+    }
+}
+
+#else
 void YM2149Class::begin()
 {
     for (auto pin : DATA_PINS)
@@ -36,37 +100,42 @@ void YM2149Class::begin()
     digitalWrite(PIN_SEL_C, LOW);
 }
 
+void YM2149Class::selectYM(uint8_t chip)
+{
+    chip = 2 - chip;
+
+    digitalWrite(PIN_SEL_A, chip & 1);
+    digitalWrite(PIN_SEL_B, (chip >> 1) & 1);
+    digitalWrite(PIN_SEL_C, (chip >> 2) & 1);
+}
+
 void YM2149Class::busWrite(uint8_t val)
 {
     for (uint8_t i = 0; i < 8; ++i)
         digitalWrite(DATA_PINS[i], (val >> i) & 1);
 }
 
-void YM2149Class::selectYM(uint8_t chip)
-{
-    chip = 2 - chip;
-
-    digitalWrite(PIN_SEL_A, chip & 0x01);
-    digitalWrite(PIN_SEL_B, (chip >> 1) & 0x01);
-    digitalWrite(PIN_SEL_C, (chip >> 2) & 0x01);
-}
-
 void YM2149Class::write(uint8_t chip, uint8_t reg, uint8_t val)
 {
-    selectYM(chip);
-    busWrite(reg & 0x1F);
-    digitalWrite(PIN_BC1, HIGH);
-    digitalWrite(PIN_BDIR, HIGH);
-    delayMicroseconds(1);
-    digitalWrite(PIN_BDIR, LOW);
-    digitalWrite(PIN_BC1, LOW);
-    delayMicroseconds(1);
+    ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
+    {
+        selectYM(chip);
+        busWrite(reg & 0x1F);
+        digitalWrite(PIN_BC1, HIGH);
+        digitalWrite(PIN_BDIR, HIGH);
+        delayMicroseconds(1);
+        digitalWrite(PIN_BDIR, LOW);
+        digitalWrite(PIN_BC1, LOW);
+        delayMicroseconds(1);
 
-    busWrite(val);
-    digitalWrite(PIN_BDIR, HIGH);
-    delayMicroseconds(1);
-    digitalWrite(PIN_BDIR, LOW);
+        busWrite(val);
+        digitalWrite(PIN_BDIR, HIGH);
+        delayMicroseconds(1);
+        digitalWrite(PIN_BDIR, LOW);
+    }
 }
+
+#endif
 
 void YM2149Class::setPin(uint8_t chip, uint8_t pin, bool value)
 {
@@ -129,11 +198,22 @@ void YM2149Class::setPortIO(uint8_t chip, bool portAOut, bool portBOut)
     write(chip, REG_MIXER, mixerValue[chip]);
 }
 
+#ifdef DIRECT_WRITE
+void YM2149Class::setLED(uint8_t chip, bool state)
+{
+    ledState[chip] = state;
+    if (state)
+        PORTB |= LED_BIT[chip];    // turn LED ON
+    else
+        PORTB &= ~LED_BIT[chip];   // turn LED OFF
+}
+#else
 void YM2149Class::setLED(uint8_t chip, bool state)
 {
     ledState[chip] = state;
     digitalWrite(CHIP_LED[chip], ledState[chip] ? LED_ON : LED_OFF);
 }
+#endif
 
 bool YM2149Class::getLED(uint8_t chip)
 {
