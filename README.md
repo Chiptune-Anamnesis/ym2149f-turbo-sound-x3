@@ -25,10 +25,10 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 
 ### Components
 
-- Arduino Pro Micro (ATmega32U4, 5 V)  
+- Arduino Pro Micro (ATmega32U4, 5V)  
 - 3 × YM2149F sound chips  
 - 74HC138 3-to-8 decoder for chip select  
-- Logic gates (74LS08, 74LS04), optional for reset or additional addressing  
+- Logic gates (74LS08, 74LS04)
 - 8 × digital lines for data bus (D0–D7)  
 - Control lines: BC1, BDIR, RESET, clock output  
 - Audio mixing: resistors + capacitor per channel  
