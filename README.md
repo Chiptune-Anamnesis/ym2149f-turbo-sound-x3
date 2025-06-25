@@ -15,7 +15,8 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 - **Drum Noise Channels**: MIDI channels 10 trigger noise percussion on chip 2.  
 - **LED Indicators**: LEDs light when each YM chip is active, with inverted logic (LOW = on).  
 - **74HC138 Decoder**: Selects among the three chips via A/B/C lines.
-- **Serial playback support**: Compatible player is a work in progress..  
+- **Serial playback support**: Compatible player is a work in progress..
+- **Digidrums**: Work in progress..
 
 ## Hardware
 
