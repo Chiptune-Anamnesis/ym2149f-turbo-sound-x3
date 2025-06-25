@@ -50,10 +50,11 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 
 ## Software Setup
 
-1. **Install Arduino IDE** (v1.8 or later).  
-2. **Add MIDIUSB library** via Library Manager.  
-3. **Load `YM2149Synth.ino`** in Arduino IDE.  
-4. **Select “Arduino Pro Micro”** the COM port, and upload.  
+1. **Install Arduino IDE** (v1.8 or later). 
+2. **Add MIDIUSB library** via Library Manager.
+3. **Download or clone** this repo.  
+4. **Load `YM2149Synth.ino`** in Arduino IDE.  
+5. **Select “Arduino Pro Micro”** select the COM port, and upload (ctrl + u).  
 
 ## Usage
 
