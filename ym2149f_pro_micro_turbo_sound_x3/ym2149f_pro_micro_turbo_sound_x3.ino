@@ -35,15 +35,16 @@ YMPlayerSerial player;
 // Synthesis state
 float   modWheel[9]            = {0};
 float   vibPhase[9]            = {0};
+float   vibRate                 = 5.0f;     // now variable
+float   vibRangeSemi            = 1.0f;     // now variable
+float   pitchBendSemis[9]   = {0};
+const float bendRangeSemi    = 2.0f;   // +/- semitones for pitch bend
+
 float   pitchEnvPhase[9]       = {0};    // 0…1 envelope phase
 float   pitchEnvIncrement[9]   = {0};    // advance per 5ms tick
 float   pitchEnvAmt[9]         = {0};    // max semitones
 uint8_t pitchEnvShape[9]       = {0};    // CC10 raw value
 
-const float vibRate            = 5.0f;
-const float vibRangeSemi       = 1.0f;
-float   pitchBendSemis[9]      = {0};
-const float bendRangeSemi      = 2.0f;
 uint8_t expressionVal[9]       = {127,127,127,127,127,127,127,127,127};
 bool    portamentoOn[9]        = {false};
 float   portamentoSpeed[9]     = {0.05f,0.05f,0.05f,0.05f,0.05f,0.05f,0.05f,0.05f,0.05f};
@@ -136,21 +137,13 @@ void updatePitchMod(uint8_t channel) {
 
     // Pitch Envelope
     if (pitchEnvAmt[channel] > 0) {
-      // advance phase (cap at 1.0)
       pitchEnvPhase[channel] += pitchEnvIncrement[channel];
       if (pitchEnvPhase[channel] > 1.0f) pitchEnvPhase[channel] = 1.0f;
 
-      // simple attack/release shape
-      float envVal;
-      if (pitchEnvShape[channel] < 64) {
-        // attack ramp 0→1
-        envVal = pitchEnvPhase[channel];
-      } else {
-        // release ramp 1→0
-        envVal = 1.0f - pitchEnvPhase[channel];
-      }
+      float envVal = (pitchEnvShape[channel] < 64)
+                   ?  pitchEnvPhase[channel]
+                   :  1.0f - pitchEnvPhase[channel];
 
-      // scale into semitones
       float semi = pitchEnvAmt[channel] * envVal;
       tp /= powf(2.0f, semi/12.0f);
     }
@@ -185,7 +178,6 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   pitchEnvPhase[ch] = 0;
 
   updatePitchMod(ch);
-  // flash LED
   digitalWrite(CHIP_LED[chip], LED_ON);
   ledOnTime[chip] = millis();
 }
@@ -209,16 +201,16 @@ void pitchBend(uint8_t ch, uint8_t lsb, uint8_t msb) {
 
 void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
   uint8_t cmd = status & 0xF0, ch = status & 0x0F;
-  if (cmd == 0x90 && d2) noteOn(ch,d1,d2);
-  else if (cmd==0x80 || (cmd==0x90&&d2==0)) noteOff(ch,d1);
+  if (cmd == 0x90 && d2)        noteOn(ch,d1,d2);
+  else if (cmd==0x80||(cmd==0x90&&d2==0)) noteOff(ch,d1);
   else if (cmd==0xB0 && ch<9) {
     switch (d1) {
       case 1:  modWheel[ch]=d2; updatePitchMod(ch); break;
       case 5:  portamentoSpeed[ch]=constrain(d2/127.0f,0.005f,0.5f); updatePitchMod(ch); break;
       case 7:  expressionVal[ch]=d2; updatePitchMod(ch); break;
       case 9:  // Pitch Envelope amount
-        pitchEnvAmt[ch] = (d2 / 127.0f) * 2.0f;           // 0–2 semitones
-        pitchEnvIncrement[ch] = 1.0f / (200.0f / 5.0f);   // envelope over ~200ms
+        pitchEnvAmt[ch] = (d2 / 127.0f) * 2.0f;
+        pitchEnvIncrement[ch] = 1.0f / (200.0f / 5.0f);
         break;
       case 10: // Pitch Envelope shape
         pitchEnvShape[ch] = d2;
@@ -226,19 +218,23 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
       case 11: expressionVal[ch]=d2; updatePitchMod(ch); break;
       case 65:
         portamentoOn[ch]=(d2>=64);
-        // reset periods so glide restarts
         for (int v=0; v<3; ++v)
           if (voiceActive[midiToChip[ch]][v] && voiceChan[midiToChip[ch]][v]==ch)
             curPeriod[midiToChip[ch]][v]=0;
         updatePitchMod(ch);
         break;
+      case 76: // Vibrato rate
+        vibRate = (d2 / 127.0f) * 10.0f;  // 0–10 Hz
+        break;
+      case 77: // Vibrato depth
+        vibRangeSemi = (d2 / 127.0f) * 2.0f;  // 0–2 semitones
+        break;
       case 120: case 123:
-        for (int v=0; v<3; ++v) {
+        for (int v=0; v<3; ++v)
           if (voiceActive[midiToChip[ch]][v] && voiceChan[midiToChip[ch]][v]==ch) {
             stopVoice(midiToChip[ch],v);
             voiceActive[midiToChip[ch]][v]=false;
           }
-        }
         break;
     }
   } else if (cmd==0xE0) pitchBend(ch,d1,d2);
@@ -255,12 +251,11 @@ void loop() {
 
   // Turn off LEDs after flash timeout
   unsigned long now = millis();
-  for (uint8_t c=0; c<3; ++c) {
+  for (uint8_t c=0; c<3; ++c)
     if (ledOnTime[c] && (now - ledOnTime[c] >= ledFlashMs)) {
       digitalWrite(CHIP_LED[c], LED_OFF);
       ledOnTime[c] = 0;
     }
-  }
 
 #if !USE_YMPLAYER_SERIAL
   midiEventPacket_t rx;
@@ -270,7 +265,7 @@ void loop() {
   player.update();
 #endif
 
-  // Periodic pitch modulation & envelope updates (~ every 5ms)
+  // Pitch modulation & envelope updates ~5 ms tick
   static unsigned long last = millis();
   unsigned long m = millis();
   if (m - last >= 5) {
@@ -281,7 +276,6 @@ void loop() {
 }
 
 void setup() {
-  // Initialize PSG bus pins
   for (auto p: DATA_PINS) pinMode(p, OUTPUT);
   pinMode(PIN_BC1, OUTPUT);
   pinMode(PIN_BDIR, OUTPUT);
@@ -291,12 +285,10 @@ void setup() {
   pinMode(PIN_ENABLE, OUTPUT);
   digitalWrite(PIN_ENABLE, HIGH);
 
-  // Initialize activity LEDs
   for (uint8_t i=0; i<3; ++i) {
     pinMode(CHIP_LED[i], OUTPUT);
     digitalWrite(CHIP_LED[i], LED_OFF);
   }
-  // Startup blink
   for (uint8_t i=0; i<3; ++i) {
     digitalWrite(CHIP_LED[i], LED_ON);
     delay(200);
@@ -304,13 +296,11 @@ void setup() {
     delay(100);
   }
 
-  // Reset all voices
   for (uint8_t c=0; c<3; ++c) {
     enableTones(c);
     for (uint8_t v=0; v<3; ++v) stopVoice(c,v);
   }
 
-  // MIDI input
   pinMode(0, INPUT_PULLUP);
   Serial1.begin(31250);
 
