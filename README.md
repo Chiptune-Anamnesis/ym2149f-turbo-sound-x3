@@ -68,7 +68,10 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 - Portamento (CC65) > 64
 - Portamento Time (CC5)  
 - Send on MIDI channel 10 (Chip 3 / YM2) for noise.  
-- LEDs will flash when each chip is active. 
+- LEDs will flash when each chip is active.
+
+## Hardware
+https://hobbychop.etsy.com - YM2149F Turbo Sound x3
 
 ## Contributors
 Special thanks to Ben Baker for his support and code contributions: https://baker76.com, https://github.com/benbaker76
