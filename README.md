@@ -68,6 +68,8 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 - Expression Value (CC7)
 - Portamento (CC65) > 64
 - Portamento Time (CC5)  
+- Pitch Sweep Amount (CC9)
+- Pitch Sweep Envelope (CC10)  
 - Send on MIDI channel 10 (Chip 3 / YM2) for noise.  
 - LEDs will flash when each chip is active.
 
