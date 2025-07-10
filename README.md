@@ -89,7 +89,7 @@ Routing fine‐tuned volume curves or toggling between “bright” and “dark�
 - Resonance / Emphasis (CC 71)
 Emphasize higher harmonics by briefly boosting volume or switching to an “overdrive” lookup.
 - Release Time (CC 72)
-How quickly your custom volume envelope decays to zero after key-off.
+How quickly the volume envelope decays to zero after key-off.
 - Arpeggio Pattern Select (e.g. CC 18 or CC 19)
 Quickly switch between up/down, random, chord-hold, or custom progressions on the fly.
 - Arpeggio Speed / Gate (alternate CC)
