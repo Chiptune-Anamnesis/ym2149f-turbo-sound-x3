@@ -17,7 +17,6 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 - **74HC138 Decoder**: Selects among the three chips via A/B/C lines.
 - **Serial playback support**: Compatible player is a work in progress..
 - **Digidrums**: Work in progress..
-- **YMPlayer Compatibility**: Work in progress..
 
 ## Hardware
 
