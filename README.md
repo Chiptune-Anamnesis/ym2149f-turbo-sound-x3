@@ -72,6 +72,7 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 - Portamento Time (CC 5) → glide speed (0.005–0.5)
 - Pitch Sweep Amount (CC 9) → max semitone sweep (0–2 semis)
 - Pitch Sweep Envelope (CC 10) → < 64 = attack, ≥ 64 = release shape
+- Volume Env Shape: 0=OFF, 1-63=Ramp up, 64-127 Ramp down (CC4)
 - All Sound/All Notes Off (CC 120/123) → channel reset
 - Send on MIDI channel 10 (Chip 3 / YM2) for noise.  
 - LEDs will flash when each chip is active.
