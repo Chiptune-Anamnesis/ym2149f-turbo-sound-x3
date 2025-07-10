@@ -63,16 +63,16 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 - Connect a USB-MIDI controller or TRS-MIDI cable.  
 - Send notes on channels 1–9 to play polyphonic voices.  
 - Use pitch bend wheel for ±2 semitone bends.  
-- Mod Wheel (CC 1) → scales vibrato depth
-- Vibrato Rate (CC 76) → 0–10 Hz LFO speed
-- Vibrato Depth (CC 77) → 0–2 semitone LFO range
-- Expression (CC 11) → per-channel volume scaling
-- Channel Volume (CC 7) → alternate expression control
-- Portamento On/Off (CC 65) → > 64 enables glide
-- Portamento Time (CC 5) → glide speed (0.005–0.5)
-- Pitch Sweep Amount (CC 9) → max semitone sweep (0–2 semis)
-- Pitch Sweep Envelope (CC 10) → < 64 = attack, ≥ 64 = release shape
-- Volume Env Shape: 0=OFF, 1-63=Ramp up, 64-127 Ramp down (CC4)
+- CC 1 – Mod Wheel → scales vibrato depth
+- CC 4 – Volume Env Shape: 0=OFF, 1–63=Ramp up, 64–127=Ramp down
+- CC 5 – Portamento Time → glide speed (0.005–0.5)
+- CC 7 – Channel Volume → alternate expression control
+- CC 9 – Pitch Sweep Amount → max semitone sweep (0–2 semis)
+- CC 10 – Pitch Sweep Envelope → < 64 = attack, ≥ 64 = release shape
+- CC 11 – Expression → per-channel volume scaling
+- CC 65 – Portamento On/Off → ≥ 64 enables glide
+- CC 76 – Vibrato Rate → 0–10 Hz LFO speed
+- CC 77 – Vibrato Depth → 0–2 semitone LFO range
 - All Sound/All Notes Off (CC 120/123) → channel reset
 - Send on MIDI channel 10 (Chip 3 / YM2) for noise.  
 - LEDs will flash when each chip is active.
