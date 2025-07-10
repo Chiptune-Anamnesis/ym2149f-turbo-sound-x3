@@ -1,5 +1,3 @@
-// Ym2149Synth.ino — YM2149F MIDI + CC support + CC4 Volume Envelope Shape (fixed ramp-down) + LED feedback
-
 #include <Arduino.h>
 #include <MIDIUSB.h>
 #include <math.h>
@@ -42,8 +40,8 @@ const uint8_t  volumeEnvelopeTable[256] = { /* … */ };
 // per-channel state
 float   modWheel[9]          = {0};
 float   vibPhase[9]          = {0};
-float   vibRate              = 5.0f;
-float   vibRangeSemi         = 1.0f;
+float   vibRate[9]           = {5.0f,5.0f,5.0f,5.0f,5.0f,5.0f,5.0f,5.0f,5.0f};
+float   vibRangeSemi[9]      = {1.0f,1.0f,1.0f,1.0f,1.0f,1.0f,1.0f,1.0f,1.0f};
 float   pitchBendSemis[9]    = {0};
 float   pitchEnvPhase[9]     = {0};
 float   pitchEnvIncrement[9] = {0};
@@ -113,9 +111,9 @@ void enableTones(uint8_t chip) { psgWrite(chip,7,0b00111000); }
 void updatePitchMod(uint8_t ch) {
   uint8_t chip = midiToChip[ch];
   // vibrato
-  vibPhase[ch] += vibRate * 0.005f;
+  vibPhase[ch] += vibRate[ch] * 0.005f;
   if(vibPhase[ch]>=1.0f) vibPhase[ch]-=1.0f;
-  float lfo = sinf(vibPhase[ch]*2*PI)*(modWheel[ch]/127.0f)*vibRangeSemi;
+  float lfo = sinf(vibPhase[ch]*2*PI) * (modWheel[ch]/127.0f) * vibRangeSemi[ch];
 
   for(int v=0;v<3;v++){
     if(!voiceActive[chip][v]||voiceChan[chip][v]!=ch) continue;
@@ -221,9 +219,7 @@ void handleMidiMsg(uint8_t status,uint8_t d1,uint8_t d2){
   else if(cmd==0xB0&&ch<9){
     switch(d1){
       case 1: modWheel[ch]=d2; updatePitchMod(ch); break;
-      case 4:
-        cc4Shape[ch]=d2;
-        break;
+      case 4: cc4Shape[ch]=d2; break;
       case 5: portamentoSpeed[ch]=constrain(d2/127.0f,0.005f,0.5f); updatePitchMod(ch); break;
       case 7: expressionVal[ch]=d2; updatePitchMod(ch); break;
       case 9:
@@ -238,8 +234,14 @@ void handleMidiMsg(uint8_t status,uint8_t d1,uint8_t d2){
           curPeriod[midiToChip[ch]][v]=0;
         updatePitchMod(ch);
         break;
-      case 76: vibRate=(d2/127.0f)*10.0f; break;
-      case 77: vibRangeSemi=(d2/127.0f)*2.0f; break;
+      case 76:
+        vibRate[ch] = (d2 / 127.0f) * 10.0f;
+        updatePitchMod(ch);
+        break;
+      case 77:
+        vibRangeSemi[ch] = (d2 / 127.0f) * 2.0f;
+        updatePitchMod(ch);
+        break;
       case 120: case 123:
         for(int v=0;v<3;v++) if(voiceActive[midiToChip[ch]][v]&&voiceChan[midiToChip[ch]][v]==ch){
           stopVoice(midiToChip[ch],v);
@@ -262,9 +264,9 @@ void setup(){
   pinMode(PIN_SEL_A,OUTPUT); pinMode(PIN_SEL_B,OUTPUT);
   pinMode(PIN_SEL_C,OUTPUT); pinMode(PIN_ENABLE,OUTPUT);
   digitalWrite(PIN_ENABLE,HIGH);
-  for(uint8_t i=0;i<3;i++){ pinMode(CHIP_LED[i],OUTPUT); digitalWrite(CHIP_LED[i],LED_OFF);}
-  for(uint8_t i=0;i<3;i++){ digitalWrite(CHIP_LED[i],LED_ON); delay(200); digitalWrite(CHIP_LED[i],LED_OFF); delay(100);}
-  for(uint8_t c=0;c<3;c++){ enableTones(c); for(uint8_t v=0;v<3;v++) stopVoice(c,v);}
+  for(uint8_t i=0;i<3;i++){ pinMode(CHIP_LED[i],OUTPUT); digitalWrite(CHIP_LED[i],LED_OFF);}  
+  for(uint8_t i=0;i<3;i++){ digitalWrite(CHIP_LED[i],LED_ON); delay(200); digitalWrite(CHIP_LED[i],LED_OFF); delay(100);}  
+  for(uint8_t c=0;c<3;c++){ enableTones(c); for(uint8_t v=0;v<3;v++) stopVoice(c,v);}  
   Serial1.begin(31250);
   #if USE_YMPLAYER_SERIAL
     Serial.begin(115200);
