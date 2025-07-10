@@ -291,18 +291,18 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
     noteOff(ch, d1);
 
   } else if (cmd == 0xB0 && ch < 9) {
-    // Control Change
+    // Control change
     switch (d1) {
       case 1:   // Mod wheel
         modWheel[ch] = d2;
         updatePitchMod(ch);
         break;
 
-      case 4:   // CC4 Volume Envelope
+      case 4:   // CC4 volume envelope
         cc4Shape[ch] = d2;
         break;
 
-      case 5:   // Portamento Speed
+      case 5:   // Portamento speed
         portamentoSpeed[ch] = constrain(d2 / 127.0f, 0.005f, 0.5f);
         updatePitchMod(ch);
         break;
@@ -313,33 +313,33 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
         updatePitchMod(ch);
         break;
 
-      case 9:   // Pitch Envelope Amount
+      case 9:   // Pitch envelope amount
         pitchEnvAmt[ch]       = (d2 / 127.0f) * 2.0f;
         pitchEnvIncrement[ch] = 1.0f / (200.0f / 5.0f);
         break;
 
-      case 10:  // Pitch Envelope Shape
+      case 10:  // Pitch envelope shape
         pitchEnvShape[ch] = d2;
         break;
 
-      case 64:  // Sustain Pedal
+      case 64:  // Sustain pedal
         sustainOn[ch] = (d2 >= 64);
         if (!sustainOn[ch]) {
-          // Pedal up → release pending notes
+          // Pedal up → release any pending notes
           uint8_t chip = midiToChip[ch];
           for (uint8_t v = 0; v < 3; v++) {
             if (pendingRelease[chip][v]
                 && voiceActive[chip][v]
                 && voiceChan[chip][v] == ch) {
-              voiceActive[chip][v]     = false;
+              voiceActive[chip][v] = false;
               stopVoice(chip, v);
-              pendingRelease[chip][v]  = false;
+              pendingRelease[chip][v] = false;
             }
           }
         }
         break;
 
-      case 65:  // Portamento On/Off
+      case 65:  // Portamento on/off
         portamentoOn[ch] = (d2 >= 64);
         for (uint8_t v = 0; v < 3; v++) {
           if (voiceActive[midiToChip[ch]][v]
@@ -350,32 +350,37 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
         updatePitchMod(ch);
         break;
 
-      case 76:  // Vibrato Rate
+      case 76:  // Vibrato rate
         vibRate[ch] = (d2 / 127.0f) * 10.0f;
         updatePitchMod(ch);
         break;
 
-      case 77:  // Vibrato Depth
+      case 77:  // Vibrato depth
         vibRangeSemi[ch] = (d2 / 127.0f) * 2.0f;
         updatePitchMod(ch);
         break;
 
-      case 85:  // Vibrato Delay
+      case 85:  // Vibrato delay
         vibDelayMs[ch] = map(d2, 0, 127, 0, 2000);
         break;
 
-      case 120: // All Sound Off
-      case 123: // All Notes Off
-        stopAllAndResetCC();
+      case 120: // All notes off (per MIDI spec)
+      case 123: // All notes off (sustain pedal off)
+        for (uint8_t v = 0; v < 3; v++) {
+          if (voiceActive[midiToChip[ch]][v]
+              && voiceChan[midiToChip[ch]][v] == ch) {
+            stopVoice(midiToChip[ch], v);
+            voiceActive[midiToChip[ch]][v] = false;
+          }
+        }
         break;
     }
 
   } else if (cmd == 0xE0) {
-    // Pitch Bend
+    // Pitch bend
     pitchBend(ch, d1, d2);
   }
 }
-
 
 
 void parseSerialMidi(uint8_t b) {
@@ -450,37 +455,5 @@ void loop() {
   if (m - last >= 5) {
     last = m;
     for (uint8_t ch = 0; ch < 9; ch++) updatePitchMod(ch);
-  }
-}
-
-// call this to kill all notes and reset CCs
-void stopAllAndResetCC() {
-  // stop all active voices immediately
-  for (uint8_t chip = 0; chip < 3; ++chip) {
-    for (uint8_t v = 0; v < 3; ++v) {
-      if (voiceActive[chip][v]) {
-        stopVoice(chip, v);
-        voiceActive[chip][v]     = false;
-        pendingRelease[chip][v]  = false;
-      }
-    }
-  }
-  // reset all CC/state arrays back to defaults
-  for (uint8_t ch = 0; ch < 9; ++ch) {
-    modWheel[ch]        = 0;
-    vibPhase[ch]        = 0;
-    vibRate[ch]         = 5.0f;
-    vibRangeSemi[ch]    = 1.0f;
-    vibDelayMs[ch]      = 0;
-    pitchBendSemis[ch]  = 0;
-    pitchEnvPhase[ch]   = 0;
-    pitchEnvAmt[ch]     = 0;
-    pitchEnvShape[ch]   = 0;
-    expressionVal[ch]   = 127;
-    portamentoOn[ch]    = false;
-    portamentoSpeed[ch] = 0.05f;
-    cc4Shape[ch]        = 0;
-    volEnvOn[ch]        = false;
-    sustainOn[ch]       = false;
   }
 }
