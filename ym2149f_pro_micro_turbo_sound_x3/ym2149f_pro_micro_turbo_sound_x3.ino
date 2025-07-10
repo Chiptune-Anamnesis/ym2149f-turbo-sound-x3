@@ -40,8 +40,8 @@ const uint8_t  volumeEnvelopeTable[256] = { /* … */ };
 // per-channel state
 float   modWheel[9]            = {0};
 float   vibPhase[9]            = {0};
-float   vibRate[9]             = {5.0f,5.0f,5.0f,5.0f,5.0f,5.0f,5.0f,5.0f,5.0f};
-float   vibRangeSemi[9]        = {1.0f,1.0f,1.0f,1.0f,1.0f,1.0f,1.0f,1.0f,1.0f};
+float   vibRate[9]             = {4.0f,4.0f,4.0f,4.0f,4.0f,4.0f,4.0f,4.0f,4.0f};
+float   vibRangeSemi[9]        = {0.3f,0.3f,0.3f,0.3f,0.3f,0.3f,0.3f,0.3f,0.3f};
 unsigned long vibStartTime[9]  = {0};          // timestamp when note-on occurred
 uint16_t vibDelayMs[9]         = {0};          // per-channel vibrato delay in ms
 
