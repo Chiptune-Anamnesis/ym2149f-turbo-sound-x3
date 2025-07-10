@@ -69,6 +69,7 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 - CC 9 – Pitch Sweep Amount → max semitone sweep (0–2 semis)
 - CC 10 – Pitch Sweep Envelope → < 64 = attack, ≥ 64 = release shape
 - CC 11 – Expression → per-channel volume scaling
+- CC 64 – Sustain On/Off → ≥ 64 enables sustain (Send all notes off or set to 0 to stop)
 - CC 65 – Portamento On/Off → ≥ 64 enables glide
 - CC 76 – Vibrato Rate → 0–10 Hz LFO speed
 - CC 77 – Vibrato Depth → 0–2 semitone LFO range
