@@ -60,6 +60,12 @@ bool    volEnvOn[9]            = {false};
 bool    volEnvDir[9]           = {true};   // true=ramp up, false=ramp down
 float   volEnvPhase[9]         = {0.0f};
 float   volEnvIncrement[9]     = {0.0f};
+bool sustainOn[9] = {
+  false, false, false,
+  false, false, false,
+  false, false, false
+};
+bool    pendingRelease[3][3]   = {{false}};
 
 // per-voice state
 bool    voiceActive[3][3]      = {{false}};
@@ -237,13 +243,31 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
 }
 
 void noteOff(uint8_t ch, uint8_t note) {
-  if (ch == 9) return;
-  uint8_t chip = midiToChip[ch];
-  for (int v = 0; v < 3; v++) {
-    if (voiceActive[chip][v] && voiceNote[chip][v] == note) {
-      voiceActive[chip][v] = false;
-      stopVoice(chip, v);
-      break;
+  if (ch == 9) return;  // skip noise channel
+
+  // if pedal down, defer actual note-off until pedal lift
+  if (sustainOn[ch]) {
+    uint8_t chip = midiToChip[ch];
+    for (uint8_t v = 0; v < 3; v++) {
+      if (voiceActive[chip][v] && voiceNote[chip][v] == note) {
+        pendingRelease[chip][v] = true;
+        break;
+      }
+    }
+    return;
+  }
+
+  // --- pedal is UP, so do the normal immediate note-off ---
+  {
+    uint8_t chip = midiToChip[ch];
+    for (uint8_t v = 0; v < 3; v++) {
+      if (voiceActive[chip][v] && voiceNote[chip][v] == note) {
+        voiceActive[chip][v] = false;
+        stopVoice(chip, v);
+        // clear any stray pending flag
+        pendingRelease[chip][v] = false;
+        break;
+      }
     }
   }
 }
@@ -259,70 +283,100 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
   uint8_t ch  = status & 0x0F;
 
   if (cmd == 0x90 && d2 > 0) {
+    // Note on
     noteOn(ch, d1, d2);
+
   } else if (cmd == 0x80 || (cmd == 0x90 && d2 == 0)) {
+    // Note off
     noteOff(ch, d1);
+
   } else if (cmd == 0xB0 && ch < 9) {
+    // Control Change
     switch (d1) {
-      case 1:
+      case 1:   // Mod wheel
         modWheel[ch] = d2;
         updatePitchMod(ch);
         break;
-      case 4:
+
+      case 4:   // CC4 Volume Envelope
         cc4Shape[ch] = d2;
         break;
-      case 5:
+
+      case 5:   // Portamento Speed
         portamentoSpeed[ch] = constrain(d2 / 127.0f, 0.005f, 0.5f);
         updatePitchMod(ch);
         break;
-      case 7:
-        expressionVal[ch] = d2;
-        updatePitchMod(ch);
-        break;
-      case 9:
-        pitchEnvAmt[ch]         = (d2 / 127.0f) * 2.0f;
-        pitchEnvIncrement[ch]   = 1.0f / (200.0f / 5.0f);
-        break;
-      case 10:
-        pitchEnvShape[ch] = d2;
-        break;
+
+      case 7:   // Expression
       case 11:
         expressionVal[ch] = d2;
         updatePitchMod(ch);
         break;
-      case 65:
-        portamentoOn[ch] = (d2 >= 64);
-        for (int v = 0; v < 3; v++) {
-          if (voiceActive[midiToChip[ch]][v] && voiceChan[midiToChip[ch]][v] == ch)
-            curPeriod[midiToChip[ch]][v] = 0;
-        }
-        updatePitchMod(ch);
+
+      case 9:   // Pitch Envelope Amount
+        pitchEnvAmt[ch]       = (d2 / 127.0f) * 2.0f;
+        pitchEnvIncrement[ch] = 1.0f / (200.0f / 5.0f);
         break;
-      case 76:
-        vibRate[ch] = (d2 / 127.0f) * 10.0f;
-        updatePitchMod(ch);
+
+      case 10:  // Pitch Envelope Shape
+        pitchEnvShape[ch] = d2;
         break;
-      case 77:
-        vibRangeSemi[ch] = (d2 / 127.0f) * 2.0f;
-        updatePitchMod(ch);
-        break;
-      case 85:  // Vibrato Delay
-        vibDelayMs[ch] = map(d2, 0, 127, 0, 2000);  // 0–2000 ms
-        break;
-      case 120:
-      case 123:
-        for (int v = 0; v < 3; v++) {
-          if (voiceActive[midiToChip[ch]][v] && voiceChan[midiToChip[ch]][v] == ch) {
-            stopVoice(midiToChip[ch], v);
-            voiceActive[midiToChip[ch]][v] = false;
+
+      case 64:  // Sustain Pedal
+        sustainOn[ch] = (d2 >= 64);
+        if (!sustainOn[ch]) {
+          // Pedal up → release pending notes
+          uint8_t chip = midiToChip[ch];
+          for (uint8_t v = 0; v < 3; v++) {
+            if (pendingRelease[chip][v]
+                && voiceActive[chip][v]
+                && voiceChan[chip][v] == ch) {
+              voiceActive[chip][v]     = false;
+              stopVoice(chip, v);
+              pendingRelease[chip][v]  = false;
+            }
           }
         }
         break;
+
+      case 65:  // Portamento On/Off
+        portamentoOn[ch] = (d2 >= 64);
+        for (uint8_t v = 0; v < 3; v++) {
+          if (voiceActive[midiToChip[ch]][v]
+              && voiceChan[midiToChip[ch]][v] == ch) {
+            curPeriod[midiToChip[ch]][v] = 0;
+          }
+        }
+        updatePitchMod(ch);
+        break;
+
+      case 76:  // Vibrato Rate
+        vibRate[ch] = (d2 / 127.0f) * 10.0f;
+        updatePitchMod(ch);
+        break;
+
+      case 77:  // Vibrato Depth
+        vibRangeSemi[ch] = (d2 / 127.0f) * 2.0f;
+        updatePitchMod(ch);
+        break;
+
+      case 85:  // Vibrato Delay
+        vibDelayMs[ch] = map(d2, 0, 127, 0, 2000);
+        break;
+
+      case 120: // All Sound Off
+      case 123: // All Notes Off
+        stopAllAndResetCC();
+        break;
     }
+
   } else if (cmd == 0xE0) {
+    // Pitch Bend
     pitchBend(ch, d1, d2);
   }
 }
+
+
 
 void parseSerialMidi(uint8_t b) {
   if (b & 0x80) {
@@ -361,6 +415,9 @@ void setup() {
     enableTones(c);
     for (uint8_t v = 0; v < 3; v++) stopVoice(c, v);
   }
+    for (uint8_t ch = 0; ch < 9; ++ch) {
+    sustainOn[ch] = false;
+  }
 
   Serial1.begin(31250);
 #if USE_YMPLAYER_SERIAL
@@ -393,5 +450,37 @@ void loop() {
   if (m - last >= 5) {
     last = m;
     for (uint8_t ch = 0; ch < 9; ch++) updatePitchMod(ch);
+  }
+}
+
+// call this to kill all notes and reset CCs
+void stopAllAndResetCC() {
+  // stop all active voices immediately
+  for (uint8_t chip = 0; chip < 3; ++chip) {
+    for (uint8_t v = 0; v < 3; ++v) {
+      if (voiceActive[chip][v]) {
+        stopVoice(chip, v);
+        voiceActive[chip][v]     = false;
+        pendingRelease[chip][v]  = false;
+      }
+    }
+  }
+  // reset all CC/state arrays back to defaults
+  for (uint8_t ch = 0; ch < 9; ++ch) {
+    modWheel[ch]        = 0;
+    vibPhase[ch]        = 0;
+    vibRate[ch]         = 5.0f;
+    vibRangeSemi[ch]    = 1.0f;
+    vibDelayMs[ch]      = 0;
+    pitchBendSemis[ch]  = 0;
+    pitchEnvPhase[ch]   = 0;
+    pitchEnvAmt[ch]     = 0;
+    pitchEnvShape[ch]   = 0;
+    expressionVal[ch]   = 127;
+    portamentoOn[ch]    = false;
+    portamentoSpeed[ch] = 0.05f;
+    cc4Shape[ch]        = 0;
+    volEnvOn[ch]        = false;
+    sustainOn[ch]       = false;
   }
 }
