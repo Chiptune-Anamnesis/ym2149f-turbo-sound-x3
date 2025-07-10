@@ -73,7 +73,7 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 - CC 65 – Portamento On/Off → ≥ 64 enables glide
 - CC 76 – Vibrato Rate → 0–10 Hz LFO speed
 - CC 77 – Vibrato Depth → 0–2 semitone LFO range
-- All Sound/All Notes Off (CC 120/123) → channel reset
+- CC 120/123 – All Sound/All Notes Off → channel reset
 - Send on MIDI channel 10 (Chip 3 / YM2) for noise.  
 - LEDs will flash when each chip is active.
 
