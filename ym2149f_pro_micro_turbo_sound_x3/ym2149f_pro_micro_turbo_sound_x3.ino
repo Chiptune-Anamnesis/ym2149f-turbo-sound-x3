@@ -204,10 +204,11 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
 
   // start vibrato delay timer
   vibStartTime[ch] = millis();
-  vibPhase[ch] = 0;
+  vibPhase[ch]     = 0;
 
   uint8_t chip = midiToChip[ch];
   uint8_t v;
+  // find a free voice or round-robin if all are active
   for (v = 0; v < 3; v++) {
     if (!voiceActive[chip][v]) break;
   }
@@ -216,11 +217,18 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     nextVoice[chip] = (v + 1) % 3;
   }
 
+  // assign voice parameters
   voiceActive[chip][v] = true;
   voiceNote[chip][v]   = note;
   voiceChan[chip][v]   = ch;
   voiceVol[chip][v]    = vel >> 3;
-  curPeriod[chip][v]   = 0;
+
+  // only zero curPeriod when portamento is off
+  if (!portamentoOn[ch]) {
+    curPeriod[chip][v] = 0;
+  }
+  // if portamentoOn[ch] is true, curPeriod retains its previous value
+  // so updatePitchMod() can glide from the last pitch
 
   // reset pitch envelope phase
   pitchEnvPhase[ch] = 0;
@@ -242,10 +250,14 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     volEnvIncrement[ch] = 1.0f / t;
   }
 
+  // apply initial pitch (with or without glide)
   updatePitchMod(ch);
+
+  // flash LED
   digitalWrite(CHIP_LED[chip], LED_ON);
   ledOnTime[chip] = millis();
 }
+
 
 void noteOff(uint8_t ch, uint8_t note) {
   if (ch == 9) return;  // skip noise channel
@@ -461,7 +473,7 @@ void loop() {
 
   static unsigned long last = millis();
   unsigned long m = millis();
-  if (m - last >= 5) {
+  if (m - last >= 2) {
     last = m;
     for (uint8_t ch = 0; ch < 9; ch++) updatePitchMod(ch);
   }
