@@ -71,7 +71,7 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 - CC 11 – Expression → per-channel volume scaling
 - CC 64 – Sustain On/Off → ≥ 64 enables sustain (send All Notes Off or set to 0 to stop)
 - CC 65 – Portamento On/Off → ≥ 64 enables glide
-- CC 68 – Laser-Jump On/Off → ≥ 64 triggers one-shot “laser” jump on note-on with portamento on CC64 and Portamento time increased CC5.
+- CC 68 – Laser-Jump On/Off → ≥ 64 one-shot “laser” jump on note-on with portamento on CC64 and Portamento time CC5.
 - CC 69 – Laser-Jump Amount → 0.0–1.0 blend toward zero for the laser effect
 - CC 76 – Vibrato Rate → 0–10 Hz LFO speed
 - CC 77 – Vibrato Depth → 0–2 semitone LFO range
