@@ -53,6 +53,9 @@ uint8_t pitchEnvShape[9]       = {0};
 uint8_t expressionVal[9]       = {127,127,127,127,127,127,127,127,127};
 bool    portamentoOn[9]        = {false};
 float   portamentoSpeed[9]     = {0.05f,0.05f,0.05f,0.05f,0.05f,0.05f,0.05f,0.05f,0.05f};
+bool    laserMode[9]   = { false,false,false,false,false,false,false,false,false };
+float   laserAmt[9]    = { 1,1,1,1,1,1,1,1,1 };  // 1.0 = full zero jump, 0.0 = no jump
+bool    laserTriggered[3][3] = {{false}};  // per-voice one-shot flag
 
 // CC4 volume envelope
 uint8_t cc4Shape[9]            = {0};
@@ -137,19 +140,18 @@ void updatePitchMod(uint8_t ch) {
   uint8_t chip = midiToChip[ch];
   unsigned long now = millis();
 
-  // vibrato: only after delay has passed
+  // vibrato LFO
   float lfo = 0;
   if (now - vibStartTime[ch] >= vibDelayMs[ch]) {
     vibPhase[ch] += vibRate[ch] * 0.005f;
-    if (vibPhase[ch] >= 1.0f)
-      vibPhase[ch] -= 1.0f;
+    if (vibPhase[ch] >= 1.0f) vibPhase[ch] -= 1.0f;
     lfo = sinf(vibPhase[ch] * 2 * PI) * (modWheel[ch] / 127.0f) * vibRangeSemi[ch];
   }
 
   for (int v = 0; v < 3; v++) {
     if (!voiceActive[chip][v] || voiceChan[chip][v] != ch) continue;
 
-    // calculate target period
+    // target period with pitch-bend + vibrato
     float base = noteToPeriod(voiceNote[chip][v]);
     float tp   = base / powf(2.0f, (pitchBendSemis[ch] + lfo) / 12.0f);
 
@@ -158,21 +160,26 @@ void updatePitchMod(uint8_t ch) {
       pitchEnvPhase[ch] += pitchEnvIncrement[ch];
       if (pitchEnvPhase[ch] > 1.0f) pitchEnvPhase[ch] = 1.0f;
       float ev = (pitchEnvShape[ch] < 64)
-                     ? pitchEnvPhase[ch]
-                     : 1.0f - pitchEnvPhase[ch];
+                   ? pitchEnvPhase[ch]
+                   : 1.0f - pitchEnvPhase[ch];
       tp /= powf(2.0f, (pitchEnvAmt[ch] * ev) / 12.0f);
     }
 
-    // portamento interpolation
-    if (portamentoOn[ch]) {
-      // always slide a bit toward the target on each update
+    // one-shot laser flag
+    if (laserTriggered[chip][v]) {
+      laserTriggered[chip][v] = false;
+      // keep curPeriod as set in noteOn()
+    }
+    // portamento slide
+    else if (portamentoOn[ch]) {
       curPeriod[chip][v] += (tp - curPeriod[chip][v]) * portamentoSpeed[ch];
-    } else {
-      // immediate jump when portamento is off
+    }
+    // immediate jump
+    else {
       curPeriod[chip][v] = tp;
     }
 
-    // round and write
+    // round and compute volume
     uint16_t outP = (uint16_t)(curPeriod[chip][v] + 0.5f);
     uint8_t vol   = (voiceVol[chip][v] * expressionVal[ch] + 63) / 127;
 
@@ -198,7 +205,6 @@ void updatePitchMod(uint8_t ch) {
   }
 }
 
-
 void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   if (ch == 9) return;  // skip noise channel
 
@@ -223,12 +229,17 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   voiceChan[chip][v]   = ch;
   voiceVol[chip][v]    = vel >> 3;
 
-  // only zero curPeriod when portamento is off
-  if (!portamentoOn[ch]) {
+  // LASER-JUMP EFFECT
+  float prevP = curPeriod[chip][v];
+  if (laserMode[ch]) {
+    // instant “laser” jump towards zero by laserAmt
+    curPeriod[chip][v] = prevP * (1.0f - laserAmt[ch]);
+  }
+  // NORMAL PORTAMENTO ZEROING
+  else if (!portamentoOn[ch]) {
     curPeriod[chip][v] = 0;
   }
-  // if portamentoOn[ch] is true, curPeriod retains its previous value
-  // so updatePitchMod() can glide from the last pitch
+  // else (portamentoOn && no laser) leave curPeriod untouched for glide
 
   // reset pitch envelope phase
   pitchEnvPhase[ch] = 0;
@@ -250,13 +261,14 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     volEnvIncrement[ch] = 1.0f / t;
   }
 
-  // apply initial pitch (with or without glide)
+  // apply pitch (with laser or portamento)
   updatePitchMod(ch);
 
   // flash LED
   digitalWrite(CHIP_LED[chip], LED_ON);
   ledOnTime[chip] = millis();
 }
+
 
 
 void noteOff(uint8_t ch, uint8_t note) {
@@ -308,47 +320,46 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
     noteOff(ch, d1);
 
   } else if (cmd == 0xB0 && ch < 9) {
-    // Control change
+    // Control Change
     switch (d1) {
-      case 1:   // Mod wheel
+      case 1:   // Mod Wheel (Vibrato via LFO)
         modWheel[ch] = d2;
         updatePitchMod(ch);
         break;
 
-      case 4:   // CC4 volume envelope
+      case 4:   // CC4 Volume Envelope Shape
         cc4Shape[ch] = d2;
         break;
 
-      case 5:   // Portamento speed
+      case 5:   // Portamento Speed
         portamentoSpeed[ch] = constrain(d2 / 127.0f, 0.005f, 0.5f);
         updatePitchMod(ch);
         break;
 
-      case 7:   // Expression
+      case 7:   // Expression (CC7 & CC11)
       case 11:
         expressionVal[ch] = d2;
         updatePitchMod(ch);
         break;
 
-      case 9:   // Pitch envelope amount
+      case 9:   // Pitch Envelope Amount
         pitchEnvAmt[ch]       = (d2 / 127.0f) * 2.0f;
         pitchEnvIncrement[ch] = 1.0f / (200.0f / 5.0f);
         break;
 
-      case 10:  // Pitch envelope shape
+      case 10:  // Pitch Envelope Shape
         pitchEnvShape[ch] = d2;
         break;
 
-      case 64:  // Sustain pedal
+      case 64:  // Sustain Pedal
         sustainOn[ch] = (d2 >= 64);
         if (!sustainOn[ch]) {
-          // Pedal up → release any pending notes
           uint8_t chip = midiToChip[ch];
           for (uint8_t v = 0; v < 3; v++) {
             if (pendingRelease[chip][v]
                 && voiceActive[chip][v]
                 && voiceChan[chip][v] == ch) {
-              voiceActive[chip][v] = false;
+              voiceActive[chip][v]   = false;
               stopVoice(chip, v);
               pendingRelease[chip][v] = false;
             }
@@ -356,49 +367,60 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
         }
         break;
 
-case 65:  // Portamento on/off
-  bool goingOn = (d2 >= 64);
-  // only reset curPeriod when turning OFF:
-  if (!goingOn) {
-    for (uint8_t v = 0; v < 3; v++) {
-      if (voiceActive[midiToChip[ch]][v]
-          && voiceChan[midiToChip[ch]][v] == ch) {
-        curPeriod[midiToChip[ch]][v] = 0;
-      }
-    }
-  }
-  portamentoOn[ch] = goingOn;
-  updatePitchMod(ch);
-  break;
+      case 65:  // Portamento On/Off
+        {
+          bool on = (d2 >= 64);
+          if (!on) {
+            uint8_t chip = midiToChip[ch];
+            for (uint8_t v = 0; v < 3; v++) {
+              if (voiceActive[chip][v] && voiceChan[chip][v] == ch) {
+                curPeriod[chip][v] = 0;
+              }
+            }
+          }
+          portamentoOn[ch] = on;
+          updatePitchMod(ch);
+        }
+        break;
 
-      case 76:  // Vibrato rate
+      case 68:  // Laser-jump On/Off
+        laserMode[ch] = (d2 >= 64);
+        break;
+
+      case 69:  // Laser-jump Amount
+        laserAmt[ch] = d2 / 127.0f;
+        break;
+
+      case 76:  // Vibrato Rate (CC76)
         vibRate[ch] = (d2 / 127.0f) * 10.0f;
         updatePitchMod(ch);
         break;
 
-      case 77:  // Vibrato depth
+      case 77:  // Vibrato Depth (CC77)
         vibRangeSemi[ch] = (d2 / 127.0f) * 2.0f;
         updatePitchMod(ch);
         break;
 
-      case 85:  // Vibrato delay
+      case 85:  // Vibrato Delay
         vibDelayMs[ch] = map(d2, 0, 127, 0, 2000);
         break;
 
-      case 120: // All notes off (per MIDI spec)
-      case 123: // All notes off (sustain pedal off)
-        for (uint8_t v = 0; v < 3; v++) {
-          if (voiceActive[midiToChip[ch]][v]
-              && voiceChan[midiToChip[ch]][v] == ch) {
-            stopVoice(midiToChip[ch], v);
-            voiceActive[midiToChip[ch]][v] = false;
+      case 120: // All Notes Off (per MIDI spec)
+      case 123: // All Notes Off (Sustain Off)
+        {
+          uint8_t chip = midiToChip[ch];
+          for (uint8_t v = 0; v < 3; v++) {
+            if (voiceActive[chip][v] && voiceChan[chip][v] == ch) {
+              stopVoice(chip, v);
+              voiceActive[chip][v] = false;
+            }
           }
         }
         break;
     }
 
   } else if (cmd == 0xE0) {
-    // Pitch bend
+    // Pitch Bend
     pitchBend(ch, d1, d2);
   }
 }
