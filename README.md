@@ -69,12 +69,14 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 - CC 9 – Pitch Sweep Amount → max semitone sweep (0–2 semis)
 - CC 10 – Pitch Sweep Envelope → < 64 = attack, ≥ 64 = release shape
 - CC 11 – Expression → per-channel volume scaling
-- CC 64 – Sustain On/Off → ≥ 64 enables sustain (Send all notes off or set to 0 to stop)
+- CC 64 – Sustain On/Off → ≥ 64 enables sustain (send All Notes Off or set to 0 to stop)
 - CC 65 – Portamento On/Off → ≥ 64 enables glide
+- CC 68 – Laser-Jump On/Off → ≥ 64 triggers one-shot “laser” jump on note-on (with portamento on)
+- CC 69 – Laser-Jump Amount → 0.0–1.0 blend toward zero for the laser effect
 - CC 76 – Vibrato Rate → 0–10 Hz LFO speed
 - CC 77 – Vibrato Depth → 0–2 semitone LFO range
-- CC 85 – Vibrato Delay
-- CC 120/123 – All Sound/All Notes Off → channel reset
+- CC 85 – Vibrato Delay → delay before LFO engages
+- CC 120/123 – All Sound / All Notes Off → channel reset
 - Noise - Send on MIDI channel 10 (Chip 3 / YM2).  
 - LEDs will flash when each chip is active.
 
