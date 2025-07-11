@@ -132,6 +132,7 @@ void enableTones(uint8_t chip) {
 }
 
 // Core update (~5ms)
+// Core update (~5ms)
 void updatePitchMod(uint8_t ch) {
   uint8_t chip = midiToChip[ch];
   unsigned long now = millis();
@@ -148,6 +149,7 @@ void updatePitchMod(uint8_t ch) {
   for (int v = 0; v < 3; v++) {
     if (!voiceActive[chip][v] || voiceChan[chip][v] != ch) continue;
 
+    // calculate target period
     float base = noteToPeriod(voiceNote[chip][v]);
     float tp   = base / powf(2.0f, (pitchBendSemis[ch] + lfo) / 12.0f);
 
@@ -161,14 +163,16 @@ void updatePitchMod(uint8_t ch) {
       tp /= powf(2.0f, (pitchEnvAmt[ch] * ev) / 12.0f);
     }
 
-    // portamento
+    // portamento interpolation
     if (portamentoOn[ch]) {
-      if (curPeriod[chip][v] == 0) curPeriod[chip][v] = tp;
+      // always slide a bit toward the target on each update
       curPeriod[chip][v] += (tp - curPeriod[chip][v]) * portamentoSpeed[ch];
     } else {
+      // immediate jump when portamento is off
       curPeriod[chip][v] = tp;
     }
 
+    // round and write
     uint16_t outP = (uint16_t)(curPeriod[chip][v] + 0.5f);
     uint8_t vol   = (voiceVol[chip][v] * expressionVal[ch] + 63) / 127;
 
@@ -178,13 +182,13 @@ void updatePitchMod(uint8_t ch) {
         volEnvPhase[ch] += volEnvIncrement[ch];
         if (volEnvPhase[ch] >= 1.0f) {
           volEnvPhase[ch] = 1.0f;
-          volEnvOn[ch] = false;
+          volEnvOn[ch]    = false;
         }
       } else {
         volEnvPhase[ch] -= volEnvIncrement[ch];
         if (volEnvPhase[ch] <= 0.0f) {
           volEnvPhase[ch] = 0.0f;
-          volEnvOn[ch] = false;
+          volEnvOn[ch]    = false;
         }
       }
       vol = (uint8_t)(vol * volEnvPhase[ch] + 0.5f);
@@ -193,6 +197,7 @@ void updatePitchMod(uint8_t ch) {
     setVoice(chip, v, outP, vol);
   }
 }
+
 
 void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   if (ch == 9) return;  // skip noise channel
@@ -339,16 +344,20 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
         }
         break;
 
-      case 65:  // Portamento on/off
-        portamentoOn[ch] = (d2 >= 64);
-        for (uint8_t v = 0; v < 3; v++) {
-          if (voiceActive[midiToChip[ch]][v]
-              && voiceChan[midiToChip[ch]][v] == ch) {
-            curPeriod[midiToChip[ch]][v] = 0;
-          }
-        }
-        updatePitchMod(ch);
-        break;
+case 65:  // Portamento on/off
+  bool goingOn = (d2 >= 64);
+  // only reset curPeriod when turning OFF:
+  if (!goingOn) {
+    for (uint8_t v = 0; v < 3; v++) {
+      if (voiceActive[midiToChip[ch]][v]
+          && voiceChan[midiToChip[ch]][v] == ch) {
+        curPeriod[midiToChip[ch]][v] = 0;
+      }
+    }
+  }
+  portamentoOn[ch] = goingOn;
+  updatePitchMod(ch);
+  break;
 
       case 76:  // Vibrato rate
         vibRate[ch] = (d2 / 127.0f) * 10.0f;
