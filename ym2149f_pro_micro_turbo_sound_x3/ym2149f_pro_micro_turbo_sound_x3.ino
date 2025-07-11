@@ -53,6 +53,8 @@ uint8_t pitchEnvShape[9]       = {0};
 uint8_t expressionVal[9]       = {127,127,127,127,127,127,127,127,127};
 bool    portamentoOn[9]        = {false};
 float   portamentoSpeed[9]     = {0.05f,0.05f,0.05f,0.05f,0.05f,0.05f,0.05f,0.05f,0.05f};
+const float PORTA_MIN = 0.005f;
+const float PORTA_MAX = 0.5f;
 bool    laserMode[9]   = { false,false,false,false,false,false,false,false,false };
 float   laserAmt[9]    = { 1,1,1,1,1,1,1,1,1 };  // 1.0 = full zero jump, 0.0 = no jump
 bool    laserTriggered[3][3] = {{false}};  // per-voice one-shot flag
@@ -331,10 +333,13 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
         cc4Shape[ch] = d2;
         break;
 
-      case 5:   // Portamento Speed
-        portamentoSpeed[ch] = constrain(d2 / 127.0f, 0.005f, 0.5f);
+    case 5: { // Portamento Speed (reversed curved mapping)
+        float norm  = d2 / 127.0f;            // 0.0 → 1.0
+        float curve = norm * norm;            // quadratic ease-in
+        // reversed: CC=0 → max, CC=127 → min
+        portamentoSpeed[ch] = 0.5f - (0.5f - 0.005f) * curve;
         updatePitchMod(ch);
-        break;
+      } break;
 
       case 7:   // Expression (CC7 & CC11)
       case 11:
