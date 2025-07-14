@@ -208,7 +208,13 @@ void updatePitchMod(uint8_t ch) {
 }
 
 void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
-  if (ch == 9) return;  // skip noise channel
+  // ——— special noise on MIDI Channel 10 (ch==9) using chip 2 ———
+  if (ch == 9) {
+    noiseOn(note, vel);
+    return;
+  }
+
+  // ——— existing tone‐voice handling for channels 1–9 ———
 
   // start vibrato delay timer
   vibStartTime[ch] = millis();
@@ -216,7 +222,7 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
 
   uint8_t chip = midiToChip[ch];
   uint8_t v;
-  // find a free voice or round-robin if all are active
+  // find a free voice, or round-robin if all are active
   for (v = 0; v < 3; v++) {
     if (!voiceActive[chip][v]) break;
   }
@@ -234,14 +240,13 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   // LASER-JUMP EFFECT
   float prevP = curPeriod[chip][v];
   if (laserMode[ch]) {
-    // instant “laser” jump towards zero by laserAmt
     curPeriod[chip][v] = prevP * (1.0f - laserAmt[ch]);
   }
   // NORMAL PORTAMENTO ZEROING
   else if (!portamentoOn[ch]) {
     curPeriod[chip][v] = 0;
   }
-  // else (portamentoOn && no laser) leave curPeriod untouched for glide
+  // else leave curPeriod untouched for glide
 
   // reset pitch envelope phase
   pitchEnvPhase[ch] = 0;
@@ -250,15 +255,15 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   if (cc4Shape[ch] == 0) {
     volEnvOn[ch] = false;
   } else if (cc4Shape[ch] < 64) {
-    volEnvOn[ch]      = true;
-    volEnvDir[ch]     = true;
-    volEnvPhase[ch]   = 0;
+    volEnvOn[ch]        = true;
+    volEnvDir[ch]       = true;
+    volEnvPhase[ch]     = 0;
     uint16_t t = map(cc4Shape[ch], 1, 63, 20, 200);
     volEnvIncrement[ch] = 1.0f / t;
   } else {
-    volEnvOn[ch]      = true;
-    volEnvDir[ch]     = false;
-    volEnvPhase[ch]   = 1.0f;
+    volEnvOn[ch]        = true;
+    volEnvDir[ch]       = false;
+    volEnvPhase[ch]     = 1.0f;
     uint16_t t = map(cc4Shape[ch], 64, 127, 20, 200);
     volEnvIncrement[ch] = 1.0f / t;
   }
@@ -266,17 +271,19 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   // apply pitch (with laser or portamento)
   updatePitchMod(ch);
 
-  // flash LED
+  // flash LED on the tone-chip
   digitalWrite(CHIP_LED[chip], LED_ON);
   ledOnTime[chip] = millis();
 }
 
-
-
 void noteOff(uint8_t ch, uint8_t note) {
-  if (ch == 9) return;  // skip noise channel
+  // ——— special noise-off on MIDI Channel 10 (ch==9) using chip 2 ———
+  if (ch == 9) {
+    noiseOff();
+    return;
+  }
 
-  // if pedal down, defer actual note-off until pedal lift
+  // ——— sustain pedal logic for channels 1–9 ———
   if (sustainOn[ch]) {
     uint8_t chip = midiToChip[ch];
     for (uint8_t v = 0; v < 3; v++) {
@@ -288,20 +295,21 @@ void noteOff(uint8_t ch, uint8_t note) {
     return;
   }
 
-  // --- pedal is UP, so do the normal immediate note-off ---
+  // ——— immediate note-off for channels 1–9 ———
   {
     uint8_t chip = midiToChip[ch];
     for (uint8_t v = 0; v < 3; v++) {
       if (voiceActive[chip][v] && voiceNote[chip][v] == note) {
         voiceActive[chip][v] = false;
         stopVoice(chip, v);
-        // clear any stray pending flag
         pendingRelease[chip][v] = false;
         break;
       }
     }
   }
 }
+
+
 
 void pitchBend(uint8_t ch, uint8_t lsb, uint8_t msb) {
   int val = (msb << 7) | lsb;
@@ -321,7 +329,7 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
     // Note off
     noteOff(ch, d1);
 
-  } else if (cmd == 0xB0 && ch < 9) {
+  } else if (cmd == 0xB0 && ch < 10) {  // allow CC on channels 1–10
     // Control Change
     switch (d1) {
       case 1:   // Mod Wheel (Vibrato via LFO)
@@ -333,7 +341,7 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
         cc4Shape[ch] = d2;
         break;
 
-    case 5: { // Portamento Speed (reversed curved mapping)
+      case 5: { // Portamento Speed (reversed curved mapping)
         float norm  = d2 / 127.0f;            // 0.0 → 1.0
         float curve = norm * norm;            // quadratic ease-in
         // reversed: CC=0 → max, CC=127 → min
@@ -431,6 +439,7 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
 }
 
 
+
 void parseSerialMidi(uint8_t b) {
   if (b & 0x80) {
     serStatus = b;
@@ -504,4 +513,18 @@ void loop() {
     last = m;
     for (uint8_t ch = 0; ch < 9; ch++) updatePitchMod(ch);
   }
+}
+
+void noiseOn(uint8_t note, uint8_t vel) {
+  uint8_t chip = 2;
+  uint8_t nf = constrain((int)note - 24, 2, 31);
+  psgWrite(chip, 6, nf);                 // noise period
+  psgWrite(chip, 7, 0b00011100);         // enable noise C, disable tone A/B/C, noise A/B
+  psgWrite(chip, 8 + 2, vel >> 3);       // volume on C
+}
+
+void noiseOff() {
+  uint8_t chip = 2;
+  enableTones(chip);                     // restore all tones
+  psgWrite(chip, 8 + 2, 0);              // silence voice C
 }
