@@ -137,8 +137,9 @@ void enableTones(uint8_t chip) {
 }
 
 // Core update (~5ms)
-// Core update (~5ms)
+// ——— Modified updatePitchMod (bounds‑checks ch 0–15) ———
 void updatePitchMod(uint8_t ch) {
+  if (ch >= 16) return;
   uint8_t chip = midiToChip[ch];
   unsigned long now = millis();
 
@@ -147,13 +148,15 @@ void updatePitchMod(uint8_t ch) {
   if (now - vibStartTime[ch] >= vibDelayMs[ch]) {
     vibPhase[ch] += vibRate[ch] * 0.005f;
     if (vibPhase[ch] >= 1.0f) vibPhase[ch] -= 1.0f;
-    lfo = sinf(vibPhase[ch] * 2 * PI) * (modWheel[ch] / 127.0f) * vibRangeSemi[ch];
+    lfo = sinf(vibPhase[ch] * 2 * PI)
+        * (modWheel[ch] / 127.0f)
+        * vibRangeSemi[ch];
   }
 
   for (int v = 0; v < 3; v++) {
     if (!voiceActive[chip][v] || voiceChan[chip][v] != ch) continue;
 
-    // target period with pitch-bend + vibrato
+    // target period with pitch‑bend + vibrato
     float base = noteToPeriod(voiceNote[chip][v]);
     float tp   = base / powf(2.0f, (pitchBendSemis[ch] + lfo) / 12.0f);
 
@@ -167,10 +170,10 @@ void updatePitchMod(uint8_t ch) {
       tp /= powf(2.0f, (pitchEnvAmt[ch] * ev) / 12.0f);
     }
 
-    // one-shot laser flag
+    // one‑shot laser
     if (laserTriggered[chip][v]) {
       laserTriggered[chip][v] = false;
-      // keep curPeriod as set in noteOn()
+      // curPeriod stays as set by noteOn()
     }
     // portamento slide
     else if (portamentoOn[ch]) {
@@ -181,8 +184,8 @@ void updatePitchMod(uint8_t ch) {
       curPeriod[chip][v] = tp;
     }
 
-    // round and compute volume
-    uint16_t outP = (uint16_t)(curPeriod[chip][v] + 0.5f);
+    // compute volume
+    uint16_t outP = uint16_t(curPeriod[chip][v] + 0.5f);
     uint8_t vol   = (voiceVol[chip][v] * expressionVal[ch] + 63) / 127;
 
     // CC4 volume envelope
@@ -200,7 +203,7 @@ void updatePitchMod(uint8_t ch) {
           volEnvOn[ch]    = false;
         }
       }
-      vol = (uint8_t)(vol * volEnvPhase[ch] + 0.5f);
+      vol = uint8_t(vol * volEnvPhase[ch] + 0.5f);
     }
 
     setVoice(chip, v, outP, vol);
@@ -317,140 +320,113 @@ void pitchBend(uint8_t ch, uint8_t lsb, uint8_t msb) {
   updatePitchMod(ch);
 }
 
+// ——— Modified handleMidiMsg — now allows CC on channels 0–15
+// ——— Modified handleMidiMsg (now allows CC on 0–15) ———
 void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
   uint8_t cmd = status & 0xF0;
   uint8_t ch  = status & 0x0F;
 
   if (cmd == 0x90 && d2 > 0) {
-    // Note on
     noteOn(ch, d1, d2);
-
-  } else if (cmd == 0x80 || (cmd == 0x90 && d2 == 0)) {
-    // Note off
+  }
+  else if (cmd == 0x80 || (cmd == 0x90 && d2 == 0)) {
     noteOff(ch, d1);
-
-  } else if (cmd == 0xB0 && ch < 10) {  // allow CC on channels 1–10
-    // Control Change
+  }
+  else if (cmd == 0xB0 && ch < 16) {  // ← expanded
     switch (d1) {
-      case 1:   // Mod Wheel (Vibrato via LFO)
-        modWheel[ch] = d2;
-        updatePitchMod(ch);
-        break;
-
-      case 4:   // CC4 Volume Envelope Shape
-        cc4Shape[ch] = d2;
-        break;
-
-      case 5: { // Portamento Speed (reversed curved mapping)
-        float norm  = d2 / 127.0f;            // 0.0 → 1.0
-        float curve = norm * norm;            // quadratic ease-in
-        // reversed: CC=0 → max, CC=127 → min
-        portamentoSpeed[ch] = 0.5f - (0.5f - 0.005f) * curve;
+      case 1:   modWheel[ch]     = d2; updatePitchMod(ch); break;
+      case 4:   cc4Shape[ch]     = d2;                          break;
+      case 5: { // portamento speed
+        float norm  = d2 / 127.0f;
+        float curve = norm * norm;
+        portamentoSpeed[ch] = 0.5f - (0.5f - PORTA_MIN) * curve;
         updatePitchMod(ch);
       } break;
-
-      case 7:   // Expression (CC7 & CC11)
-      case 11:
-        expressionVal[ch] = d2;
-        updatePitchMod(ch);
-        break;
-
-      case 9:   // Pitch Envelope Amount
-        pitchEnvAmt[ch]       = (d2 / 127.0f) * 2.0f;
-        pitchEnvIncrement[ch] = 1.0f / (200.0f / 5.0f);
-        break;
-
-      case 10:  // Pitch Envelope Shape
-        pitchEnvShape[ch] = d2;
-        break;
-
-      case 64:  // Sustain Pedal
-        sustainOn[ch] = (d2 >= 64);
-        if (!sustainOn[ch]) {
-          uint8_t chip = midiToChip[ch];
-          for (uint8_t v = 0; v < 3; v++) {
-            if (pendingRelease[chip][v]
-                && voiceActive[chip][v]
-                && voiceChan[chip][v] == ch) {
-              voiceActive[chip][v]   = false;
-              stopVoice(chip, v);
-              pendingRelease[chip][v] = false;
-            }
-          }
-        }
-        break;
-
-      case 65:  // Portamento On/Off
-        {
-          bool on = (d2 >= 64);
-          if (!on) {
-            uint8_t chip = midiToChip[ch];
-            for (uint8_t v = 0; v < 3; v++) {
-              if (voiceActive[chip][v] && voiceChan[chip][v] == ch) {
-                curPeriod[chip][v] = 0;
-              }
-            }
-          }
-          portamentoOn[ch] = on;
-          updatePitchMod(ch);
-        }
-        break;
-
-      case 68:  // Laser-jump On/Off
-        laserMode[ch] = (d2 >= 64);
-        break;
-
-      case 69:  // Laser-jump Amount
-        laserAmt[ch] = d2 / 127.0f;
-        break;
-
-      case 76:  // Vibrato Rate (CC76)
-        vibRate[ch] = (d2 / 127.0f) * 10.0f;
-        updatePitchMod(ch);
-        break;
-
-      case 77:  // Vibrato Depth (CC77)
-        vibRangeSemi[ch] = (d2 / 127.0f) * 2.0f;
-        updatePitchMod(ch);
-        break;
-
-      case 85:  // Vibrato Delay
-        vibDelayMs[ch] = map(d2, 0, 127, 0, 2000);
-        break;
-
-      case 120: // All Notes Off (per MIDI spec)
-      case 123: // All Notes Off (Sustain Off)
-        {
-          uint8_t chip = midiToChip[ch];
-          for (uint8_t v = 0; v < 3; v++) {
-            if (voiceActive[chip][v] && voiceChan[chip][v] == ch) {
-              stopVoice(chip, v);
-              voiceActive[chip][v] = false;
-            }
-          }
-        }
-        break;
+      case 7:
+      case 11:  expressionVal[ch] = d2; updatePitchMod(ch);     break;
+      case 9:   pitchEnvAmt[ch]       = (d2 / 127.0f) * 2.0f;
+                  pitchEnvIncrement[ch] = 1.0f / (200.0f / 5.0f); break;
+      case 10:  pitchEnvShape[ch] = d2;                          break;
+      case 64:  sustainOn[ch]     = (d2 >= 64);
+                  if (!sustainOn[ch]) {
+                    uint8_t chip = midiToChip[ch];
+                    for (uint8_t v = 0; v < 3; v++) {
+                      if (pendingRelease[chip][v]
+                       && voiceActive[chip][v]
+                       && voiceChan[chip][v] == ch) {
+                        voiceActive[chip][v]   = false;
+                        stopVoice(chip, v);
+                        pendingRelease[chip][v] = false;
+                      }
+                    }
+                  }
+                  break;
+      case 65:  {
+                  bool on = (d2 >= 64);
+                  if (!on) {
+                    uint8_t chip = midiToChip[ch];
+                    for (uint8_t v = 0; v < 3; v++) {
+                      if (voiceActive[chip][v]
+                       && voiceChan[chip][v] == ch) {
+                        curPeriod[chip][v] = 0;
+                      }
+                    }
+                  }
+                  portamentoOn[ch] = on;
+                  updatePitchMod(ch);
+                }
+                break;
+      case 68:  laserMode[ch]     = (d2 >= 64);                 break;
+      case 69:  laserAmt[ch]      = d2 / 127.0f;                break;
+      case 76:  vibRate[ch]       = (d2 / 127.0f) * 10.0f; updatePitchMod(ch); break;
+      case 77:  vibRangeSemi[ch]  = (d2 / 127.0f) * 2.0f;  updatePitchMod(ch); break;
+      case 85:  vibDelayMs[ch]    = map(d2, 0, 127, 0, 2000);   break;
+      case 120:
+      case 123: {
+                  uint8_t chip = midiToChip[ch];
+                  for (uint8_t v = 0; v < 3; v++) {
+                    if (voiceActive[chip][v]
+                     && voiceChan[chip][v] == ch) {
+                      stopVoice(chip, v);
+                      voiceActive[chip][v] = false;
+                    }
+                  }
+                } break;
     }
-
-  } else if (cmd == 0xE0) {
-    // Pitch Bend
+  }
+  else if (cmd == 0xE0) {
     pitchBend(ch, d1, d2);
   }
 }
 
-
-
 void parseSerialMidi(uint8_t b) {
+  // real‑time messages (0xF8–0xFF): ignore, don't disturb serState
+  if (b >= 0xF8) {
+    return;
+  }
+
+  // system‑common (0xF0–0xF7): skip and re‑sync parser
+  if (b >= 0xF0) {
+    serState = WAIT_STATUS;
+    return;
+  }
+
+  // channel status bytes (0x80–0xEF)
   if (b & 0x80) {
     serStatus = b;
-    serState = WAIT_D1;
-  } else if (serState == WAIT_D1) {
-    serD1 = b;
-    serState = WAIT_D2;
-  } else if (serState == WAIT_D2) {
-    handleMidiMsg(serStatus, serD1, b);
-    serState = WAIT_D1;
+    serState  = WAIT_D1;
   }
+  // first data byte
+  else if (serState == WAIT_D1) {
+    serD1     = b;
+    serState  = WAIT_D2;
+  }
+  // second data byte → full MIDI message
+  else if (serState == WAIT_D2) {
+    handleMidiMsg(serStatus, serD1, b);
+    serState  = WAIT_D1;
+  }
+  // otherwise (data in WAIT_STATUS): just drop it
 }
 
 void setup() {
@@ -481,6 +457,9 @@ void setup() {
     sustainOn[ch] = false;
   }
 
+  for (uint8_t ch = 0; ch < 16; ++ch) {
+    sustainOn[ch] = false;
+  }
   Serial1.begin(31250);
 #if USE_YMPLAYER_SERIAL
   Serial.begin(115200);
@@ -488,12 +467,13 @@ void setup() {
 #endif
 }
 
+// ——— Modified loop() — calls updatePitchMod(ch) for 0…15 ———
 void loop() {
   while (Serial1.available()) parseSerialMidi(Serial1.read());
 
   unsigned long now = millis();
   for (uint8_t c = 0; c < 3; c++) {
-    if (ledOnTime[c] && (now - ledOnTime[c] >= ledFlashMs)) {
+    if (ledOnTime[c] && now - ledOnTime[c] >= ledFlashMs) {
       digitalWrite(CHIP_LED[c], LED_OFF);
       ledOnTime[c] = 0;
     }
@@ -501,17 +481,20 @@ void loop() {
 
 #if !USE_YMPLAYER_SERIAL
   midiEventPacket_t rx;
-  while ((rx = MidiUSB.read()).header)
+  while ((rx = MidiUSB.read()).header) {
     handleMidiMsg(rx.byte1, rx.byte2, rx.byte3);
+  }
 #else
   player.update();
 #endif
 
   static unsigned long last = millis();
   unsigned long m = millis();
-  if (m - last >= 2) {
+  if (m - last >= 3) {
     last = m;
-    for (uint8_t ch = 0; ch < 9; ch++) updatePitchMod(ch);
+    for (uint8_t ch = 0; ch < 16; ++ch) {
+      updatePitchMod(ch);
+    }
   }
 }
 
