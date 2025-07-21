@@ -37,6 +37,8 @@ const uint8_t  volumeEnvelopeTable[256] = { /* … */ };
   YMPlayerSerial player;
 #endif
 
+#define VELOCITY_GAMMA  0.6f 
+
 #define DEFAULT_VIB_RATE      7.0f   // Hz
 #define DEFAULT_VIB_RANGE     0.5f   // semitone
 
@@ -231,15 +233,13 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     return;
   }
 
-  // ——— existing tone‐voice handling for channels 1–9 ———
-
-  // start vibrato delay timer
+  // ——— start vibrato delay timer ———
   vibStartTime[ch] = millis();
   vibPhase[ch]     = 0;
 
+  // ——— find a free tone‑voice or round‑robin ———
   uint8_t chip = midiToChip[ch];
   uint8_t v;
-  // find a free voice, or round-robin if all are active
   for (v = 0; v < 3; v++) {
     if (!voiceActive[chip][v]) break;
   }
@@ -248,27 +248,35 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     nextVoice[chip] = (v + 1) % 3;
   }
 
-  // assign voice parameters
+  // ——— assign voice parameters ———
   voiceActive[chip][v] = true;
   voiceNote[chip][v]   = note;
   voiceChan[chip][v]   = ch;
-  voiceVol[chip][v]    = vel >> 3;
 
-  // LASER-JUMP EFFECT
+  // —— improved velocity sensitivity via gamma curve ——
+  {
+    // normalize 0–127 → 0.0–1.0
+    float velNorm  = vel / 127.0f;
+    // apply gamma to boost low‑velocity resolution
+    float velCurve = powf(velNorm, VELOCITY_GAMMA);
+    // scale to YM 4‑bit volume (0–15)
+    voiceVol[chip][v] = uint8_t(velCurve * 15.0f + 0.5f);
+  }
+
+  // ——— laser‑jump or portamento zeroing ———
   float prevP = curPeriod[chip][v];
   if (laserMode[ch]) {
     curPeriod[chip][v] = prevP * (1.0f - laserAmt[ch]);
   }
-  // NORMAL PORTAMENTO ZEROING
   else if (!portamentoOn[ch]) {
     curPeriod[chip][v] = 0;
   }
-  // else leave curPeriod untouched for glide
+  // else leave curPeriod for glide
 
-  // reset pitch envelope phase
+  // ——— reset pitch envelope phase ———
   pitchEnvPhase[ch] = 0;
 
-  // CC4 volume envelope trigger
+  // ——— CC4 volume‑envelope trigger ———
   if (cc4Shape[ch] == 0) {
     volEnvOn[ch] = false;
   } else if (cc4Shape[ch] < 64) {
@@ -285,13 +293,14 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     volEnvIncrement[ch] = 1.0f / t;
   }
 
-  // apply pitch (with laser or portamento)
+  // ——— apply initial pitch (with laser/portamento) ———
   updatePitchMod(ch);
 
-  // flash LED on the tone-chip
+  // ——— flash LED on the tone‑chip ———
   digitalWrite(CHIP_LED[chip], LED_ON);
   ledOnTime[chip] = millis();
 }
+
 
 void noteOff(uint8_t ch, uint8_t note) {
   // ——— special noise-off on MIDI Channel 10 (ch==9) using chip 2 ———
