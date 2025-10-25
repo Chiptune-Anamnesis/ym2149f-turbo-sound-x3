@@ -103,7 +103,7 @@ Pan or fade between the three YM chips (e.g. chip 0 left, chip 1 center, chip 2 
 Use poly- or channel-aftertouch to add real-time pitch bend, filter simulation, or envelope modulation keyed to how hard you press.
 
 ## Hardware
-https://hobbychop.etsy.com - YM2149F Turbo Sound x3
+https://hobbychop.com - YM2149F Turbo Sound x3
 
 ## Contributors
 Special thanks to Ben Baker for his support and code contributions: https://baker76.com, https://github.com/benbaker76
