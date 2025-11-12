@@ -2,7 +2,7 @@
 
 An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sound chips, complete with MIDI input, per-channel pitch bend, vibrato, expression, portamento and noise-based drum channel, and LED indicators.
 
-## Recent Stability Fixes (v1.44)
+## Recent Stability Fixes and Updates (v1.44)
 
 ### Critical Bugs Fixed
 
