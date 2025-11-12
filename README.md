@@ -2,6 +2,83 @@
 
 An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sound chips, complete with MIDI input, per-channel pitch bend, vibrato, expression, portamento and noise-based drum channel, and LED indicators.
 
+## Recent Stability Fixes (v1.44)
+
+### Critical Bugs Fixed
+
+#### 1. Array Bounds Violation (MIDI Channels 11-16)
+**Problem:** MIDI files with active channels 11-16 caused wild behavior, stuck notes, and memory corruption.
+- When channels 11-16 sent note messages, the code accessed `midiToChip[10-15]`
+- The `midiToChip` array only has 9 elements (indices 0-8)
+- Out-of-bounds array access read garbage memory
+- Random chip values caused invalid YM writes and state corruption
+- Behavior degraded over time as corruption accumulated
+
+**Fix:** Added channel validation to prevent out-of-bounds access:
+- `noteOn()`: Returns early for channels >= 9
+- `noteOff()`: Returns early for channels >= 9
+- `pitchBend()`: Returns early for channels >= 9
+
+#### 2. Division by Zero in Laser Mode
+**Problem:** Laser mode caused stuck glitchy notes that wouldn't stop, even with MIDI Stop.
+- `curPeriod = targetP / laserAmt` when `laserAmt = 0` produced NaN/Infinity
+- Invalid period values propagated through the voice state
+- Caused unstoppable glitchy "portamento/laser" effect
+
+**Fix:** Changed laser calculation to prevent division by zero:
+- Added `laserAmt > 0.01f` safety check
+- Changed from division to multiplication: `curPeriod = targetP * (1.0f + laserAmt * 10.0f)`
+- Added period clamping (1.0-4095.0) to catch NaN/Infinity/overflow
+- Fixed immediate attack to use `targetP` instead of 0
+
+#### 3. Portamento Speed Scaling
+**Problem:** Portamento speed was inverted (CC5: 0=fast, 127=slow instead of 0=slow, 127=fast).
+
+**Fix:** Applied quadratic curve to CC5 mapping:
+```cpp
+float norm  = d2 / 127.0f;
+float curve = norm * norm;
+portamentoSpeed[ch] = PORTA_MIN + (PORTA_MAX - PORTA_MIN) * curve;
+```
+
+#### 4. Note Range Validation
+**Problem:** Out-of-bounds MIDI notes caused invalid period calculations and glitches.
+
+**Fix:** Added note clamping to valid range:
+- `MIDI_NOTE_MIN = 21` (A0)
+- `MIDI_NOTE_MAX = 108` (C8)
+- Applied in both `noteOn()` and `noteOff()`
+
+### Enhancements
+
+#### MIDI Real-Time Message Handling
+Added proper support for MIDI Stop/Start/Continue (0xFC/0xFA/0xFB):
+- **MIDI Stop (0xFC)**: Calls `allNotesOffPanic()` and `resetAllControllers()` for all channels
+- **MIDI Start (0xFA)**: Resets all controllers for clean playback start
+- **MIDI Continue (0xFB)**: Resets all controllers
+
+#### Controller Reset Functions
+- `resetAllControllers(ch)`: Resets all CC values to defaults for a channel
+- `allNotesOffPanic()`: Emergency stop for all voices on all chips
+- `allNotesOffChannel(ch)`: Stop all notes on a specific channel
+
+#### CC121 Support (Reset All Controllers)
+Implements standard MIDI CC121 behavior to reset stuck controller states.
+
+#### Improved Note-Off Handling
+Changed `noteOff()` to release **ALL** matching notes instead of just the first one:
+- Prevents stuck notes when duplicate note-ons occur
+- Removed `break` statements in voice-scanning loops
+
+#### YM2149 Class Integration
+Replaced slow `digitalWrite()` calls with optimized class methods:
+- Direct port manipulation (PORTB/PORTF writes)
+- ATOMIC_BLOCK for interrupt safety
+- Chip caching to avoid redundant selection
+- Precise timing with `_NOP()` instead of `delayMicroseconds()`
+- ~10x performance improvement
+---
+
 ## Features
 
 - **3× YM2149F Chips**: Provides 9 independent tone voices (3 per chip).  
