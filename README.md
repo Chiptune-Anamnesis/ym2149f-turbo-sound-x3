@@ -72,7 +72,7 @@ Replaced slow `digitalWrite()` calls with optimized class methods
   - Channels 7–9 → Chip 2 voices A/B/C  
 - **Pitch Bend & Vibrato**: Standard pitch bend (±2 semitones) and CC1 mod-wheel vibrato.
 - **Other Standard CC**: Velocity, Expression, Portamento, Sweep, Envelope
-- **Drum Noise Channels**: MIDI channels 10 trigger noise percussion on chip 2.  
+- **Drum Noise Channels**: (If enabled in Code: Disabled by Default) MIDI channels 10 trigger noise percussion on chip 2.  
 - **LED Indicators**: LEDs light when each YM chip is active, with inverted logic (LOW = on).  
 - **74HC138 Decoder**: Selects among the three chips via A/B/C lines.
 - **Serial playback support**: Compatible player is a work in progress..
@@ -137,7 +137,7 @@ Replaced slow `digitalWrite()` calls with optimized class methods
 - CC 77 – Vibrato Depth → 0–2 semitone LFO range
 - CC 85 – Vibrato Delay → delay before LFO engages
 - CC 120/123 – All Sound / All Notes Off → channel reset
-- Noise - Send on MIDI channel 10 (Chip 3 / YM2).  
+- Noise - Send on MIDI channel 10 (Chip 3 / YM2). *If enabled in Code: Disabled by Default
 - LEDs will flash when each chip is active.
 
 ## Possible Future Features
