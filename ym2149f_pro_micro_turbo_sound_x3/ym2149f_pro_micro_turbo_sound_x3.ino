@@ -12,6 +12,15 @@
 // Toggle noise channel support (MIDI channel 10)
 #define ENABLE_NOISE_CHANNEL 0
 
+// Velocity curve configuration
+#define VELOCITY_GAMMA  0.4f    // Gamma curve (lower = more boost for soft notes, try 0.4-0.7)
+#define VELOCITY_MIN    3       // Minimum YM volume (0-15, try 3-4 for audible soft notes)
+#define VELOCITY_MAX    15      // Maximum YM volume (1-15, typically 15)
+
+// Volume envelope/expression control
+#define EXPRESSION_AMOUNT 0.3f  // How much CC7/CC11 affects volume (0.0=none, 1.0=full, try 0.3-0.5 for compression)
+#define USE_CC4_ENVELOPE  1     // 0 = bypass CC4 volume envelope, 1 = enable
+
 #define LED_ON  LOW
 #define LED_OFF HIGH
 
@@ -31,9 +40,7 @@ const uint8_t  volumeEnvelopeTable[256] = { /* … */ };
 
 #if USE_YMPLAYER_SERIAL
   YMPlayerSerial player;
-#endif
-
-#define VELOCITY_GAMMA  0.6f 
+#endif 
 
 #define DEFAULT_VIB_RATE      7.0f   // Hz
 #define DEFAULT_VIB_RANGE     0.5f   // semitone
@@ -248,9 +255,12 @@ void updatePitchMod(uint8_t ch) {
 
     // compute volume
     uint16_t outP = uint16_t(curPeriod[chip][v] + 0.5f);
-    uint8_t vol   = (voiceVol[chip][v] * expressionVal[ch] + 63) / 127;
+    // Apply expression/CC11 with adjustable amount (0.0=bypass, 1.0=full effect)
+    uint8_t effectiveExpr = 127 - (uint8_t)((127 - expressionVal[ch]) * EXPRESSION_AMOUNT);
+    uint8_t vol = (voiceVol[chip][v] * effectiveExpr + 63) / 127;
 
     // CC4 volume envelope
+#if USE_CC4_ENVELOPE
     if (volEnvOn[ch]) {
       if (volEnvDir[ch]) {
         volEnvPhase[ch] += volEnvIncrement[ch];
@@ -267,6 +277,7 @@ void updatePitchMod(uint8_t ch) {
       }
       vol = uint8_t(vol * volEnvPhase[ch] + 0.5f);
     }
+#endif
 
     setVoice(chip, v, outP, vol);
   }
@@ -314,8 +325,9 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     float velNorm  = vel / 127.0f;
     // apply gamma to boost low‑velocity resolution
     float velCurve = powf(velNorm, VELOCITY_GAMMA);
-    // scale to YM 4‑bit volume (0–15)
-    voiceVol[chip][v] = uint8_t(velCurve * 15.0f + 0.5f);
+    // scale to YM volume range (VELOCITY_MIN to VELOCITY_MAX)
+    float range = VELOCITY_MAX - VELOCITY_MIN;
+    voiceVol[chip][v] = uint8_t(VELOCITY_MIN + velCurve * range + 0.5f);
   }
 
   // ——— laser‑jump or portamento zeroing ———
