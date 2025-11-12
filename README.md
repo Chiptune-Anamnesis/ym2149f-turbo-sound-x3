@@ -78,6 +78,102 @@ Replaced slow `digitalWrite()` calls with optimized class methods
 - **Serial playback support**: Compatible player is a work in progress..
 - **Digidrums**: Work in progress..
 
+## Configuration Parameters
+
+### Velocity Curve Settings
+
+The YM2149F has only 16 volume levels (0-15), which can make soft MIDI notes inaudible. These parameters allow you to customize how MIDI velocity (0-127) maps to YM volume.
+
+#### `VELOCITY_GAMMA` (default: `0.4f`)
+- **Range:** 0.1 - 1.0
+- **Purpose:** Gamma curve exponent for velocity response
+- **Lower values** (0.2-0.4): Boost soft notes significantly, compress loud notes
+- **Higher values** (0.6-1.0): More linear response, preserves velocity dynamics
+- **Recommended:** 0.4 for general use, 0.2-0.3 for very sensitive response
+
+#### `VELOCITY_MIN` (default: `3`)
+- **Range:** 0-15
+- **Purpose:** Minimum YM volume for softest MIDI velocity (0)
+- **0:** Softest notes are silent (maximum dynamic range)
+- **3-4:** Softest notes are audible but quiet (recommended)
+- **8-10:** All notes are fairly loud (compressed dynamics)
+- **15:** All notes at maximum volume (no velocity response)
+
+#### `VELOCITY_MAX` (default: `15`)
+- **Range:** 1-15
+- **Purpose:** Maximum YM volume for loudest MIDI velocity (127)
+- **15:** Full volume range (recommended)
+- **10-14:** Limit maximum loudness
+- **Note:** Must be ≥ VELOCITY_MIN
+
+**Example configurations:**
+
+```cpp
+// Balanced response (default)
+#define VELOCITY_GAMMA  0.4f
+#define VELOCITY_MIN    3
+#define VELOCITY_MAX    15
+
+// Very sensitive for quiet playing
+#define VELOCITY_GAMMA  0.2f
+#define VELOCITY_MIN    5
+#define VELOCITY_MAX    15
+
+// Compressed (all notes fairly loud)
+#define VELOCITY_GAMMA  0.5f
+#define VELOCITY_MIN    10
+#define VELOCITY_MAX    15
+
+// Maximum volume (ignore velocity)
+#define VELOCITY_GAMMA  0.4f
+#define VELOCITY_MIN    15
+#define VELOCITY_MAX    15
+```
+
+### Volume Control Settings
+
+#### `EXPRESSION_AMOUNT` (default: `0.3f`)
+- **Range:** 0.0-1.0
+- **Purpose:** Controls how much CC7 (Channel Volume) and CC11 (Expression) affect volume
+- **0.0:** Bypass expression entirely (velocity only controls volume)
+- **0.3-0.5:** Reduced expression effect (dynamic range compression)
+- **1.0:** Full expression control (standard MIDI behavior)
+- **Use case:** Reduce to 0.0-0.3 if MIDI files have very low CC7/CC11 values causing inaudible notes
+
+#### `USE_CC4_ENVELOPE` (default: `1`)
+- **Range:** 0 or 1
+- **Purpose:** Enable/disable CC4 volume envelope shaping
+- **1:** Enable CC4 volume envelopes (standard)
+- **0:** Disable CC4 processing (bypass envelope)
+- **Use case:** Disable if CC4 envelopes cause unwanted volume changes
+
+**Example configurations:**
+
+```cpp
+// Standard MIDI behavior (default)
+#define EXPRESSION_AMOUNT 1.0f
+#define USE_CC4_ENVELOPE  1
+
+// Bypass all MIDI volume control (velocity only)
+#define EXPRESSION_AMOUNT 0.0f
+#define USE_CC4_ENVELOPE  0
+
+// Compressed dynamics (limit CC7/CC11 effect)
+#define EXPRESSION_AMOUNT 0.3f
+#define USE_CC4_ENVELOPE  1
+```
+
+### Noise Channel
+
+#### `ENABLE_NOISE_CHANNEL` (default: `0`)
+- **Range:** 0 or 1
+- **Purpose:** Enable MIDI channel 10 (percussion) via noise generator
+- **0:** Disabled (noise code excluded from compilation)
+- **1:** Enabled (channel 10 uses chip 2 noise generator)
+- **Note:** When enabled, chip 2 voice C is dedicated to noise and unavailable for tone
+
+---
+
 ## Hardware
 
 <h1 align="center">
