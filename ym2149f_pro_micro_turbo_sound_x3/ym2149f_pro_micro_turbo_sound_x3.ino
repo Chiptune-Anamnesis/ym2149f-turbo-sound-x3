@@ -3,41 +3,6 @@
 #include <math.h>
 #include "YM2149.h"
 
-// ═══════════════════════════════════════════════════════════════════════════
-// MIDI STABILITY FIXES v1.49
-// ═══════════════════════════════════════════════════════════════════════════
-// ✓ Fixed portamento speed scaling (was inverted)
-// ✓ Added note range clamping (A0-C8) to prevent glitchy out-of-bounds periods
-// ✓ Implemented MIDI Stop/Start/Continue (0xFC/0xFA/0xFB) handling
-// ✓ Added resetAllControllers() to clear stuck CC states
-// ✓ Added allNotesOffPanic() for emergency voice clearing
-// ✓ Implemented CC121 (Reset All Controllers) support
-// ✓ Improved noteOff to release ALL matching notes (prevents stuck notes)
-// ✓ Added channel validation to noteOff sustain logic
-// ✓ All controllers initialized via resetAllControllers() in setup()
-// ✓ CRITICAL: Fixed array bounds - only channels 0-8 are valid for tone generation
-// ✓ OPTIMIZATION: Using YM2149 class with direct port manipulation + atomic blocks
-// ✓ CRITICAL: Fixed laser mode division-by-zero bug causing NaN/Infinity stuck notes
-//   - Changed from curPeriod = targetP / laserAmt to multiplication formula
-//   - Added laserAmt > 0.01f check to prevent division by zero
-//   - Added period clamping (1.0-4095.0) to catch NaN/Infinity/overflow values
-//   - Fixed immediate attack to use targetP instead of 0
-// ✓ CRITICAL: Added channel validation to noteOn, noteOff, and pitchBend
-//   - Prevents array bounds violation when MIDI channels 11-16 send note messages
-//   - These channels were reading garbage from midiToChip[10-15] out-of-bounds
-//   - Caused wild behavior, stuck notes, and memory corruption
-// ✓ Fixed LED polarity (inverted YM2149 class setLED logic)
-//   - LEDs were always on and turned off on notes
-//   - Now correctly off by default and flash on when notes hit
-// ✓ Simplified noise channel cleanup in noiseOff()
-//   - Just mutes volume (reg 10) - that's what stops it between drum hits
-//   - No mixer or register manipulation needed
-//   - Simple, reliable, matches how noiseOn() works (volume controls sound)
-// ✓ Added LED flash for noise channel (chip 2)
-//   - LED2 now flashes when channel 10 (noise) notes are received
-//   - Consistent with tone channel LED behavior
-// ═══════════════════════════════════════════════════════════════════════════
-
 // Toggle YM file streaming via USB CDC
 #define USE_YMPLAYER_SERIAL 0
 #if USE_YMPLAYER_SERIAL
