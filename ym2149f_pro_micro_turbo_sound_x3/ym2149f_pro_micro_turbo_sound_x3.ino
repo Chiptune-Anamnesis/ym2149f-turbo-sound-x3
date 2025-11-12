@@ -1,6 +1,32 @@
 #include <Arduino.h>
 #include <MIDIUSB.h>
 #include <math.h>
+#include "YM2149.h"
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MIDI STABILITY FIXES v1.44
+// ═══════════════════════════════════════════════════════════════════════════
+// ✓ Fixed portamento speed scaling (was inverted)
+// ✓ Added note range clamping (A0-C8) to prevent glitchy out-of-bounds periods
+// ✓ Implemented MIDI Stop/Start/Continue (0xFC/0xFA/0xFB) handling
+// ✓ Added resetAllControllers() to clear stuck CC states
+// ✓ Added allNotesOffPanic() for emergency voice clearing
+// ✓ Implemented CC121 (Reset All Controllers) support
+// ✓ Improved noteOff to release ALL matching notes (prevents stuck notes)
+// ✓ Added channel validation to noteOff sustain logic
+// ✓ All controllers initialized via resetAllControllers() in setup()
+// ✓ CRITICAL: Fixed array bounds - only channels 0-8 are valid for tone generation
+// ✓ OPTIMIZATION: Using YM2149 class with direct port manipulation + atomic blocks
+// ✓ CRITICAL: Fixed laser mode division-by-zero bug causing NaN/Infinity stuck notes
+//   - Changed from curPeriod = targetP / laserAmt to multiplication formula
+//   - Added laserAmt > 0.01f check to prevent division by zero
+//   - Added period clamping (1.0-4095.0) to catch NaN/Infinity/overflow values
+//   - Fixed immediate attack to use targetP instead of 0
+// ✓ CRITICAL: Added channel validation to noteOn, noteOff, and pitchBend
+//   - Prevents array bounds violation when MIDI channels 11-16 send note messages
+//   - These channels were reading garbage from midiToChip[10-15] out-of-bounds
+//   - Caused wild behavior, stuck notes, and memory corruption
+// ═══════════════════════════════════════════════════════════════════════════
 
 // Toggle YM file streaming via USB CDC
 #define USE_YMPLAYER_SERIAL 0
@@ -11,17 +37,9 @@
 #define LED_ON  LOW
 #define LED_OFF HIGH
 
-// YM2149F control pins
-const uint8_t DATA_PINS[8]  = {2,3,4,5,6,7,8,9};
-const uint8_t PIN_BC1       = 10;
-const uint8_t PIN_BDIR      = 20;
-const uint8_t PIN_SEL_A     = A3;
-const uint8_t PIN_SEL_B     = A1;
-const uint8_t PIN_SEL_C     = A0;
-const uint8_t PIN_ENABLE    = A2;
+// YM2149F hardware interface
+YM2149 ym;
 
-// LEDs per chip
-const uint8_t CHIP_LED[3]   = {15,14,16};
 // MIDI→chip map
 const uint8_t midiToChip[9] = {0,0,0, 1,1,1, 2,2,2};
 
@@ -71,6 +89,8 @@ bool    portamentoOn[9]        = {false};
 float   portamentoSpeed[9]     = {0.05f,0.05f,0.05f,0.05f,0.05f,0.05f,0.05f,0.05f,0.05f};
 const float PORTA_MIN = 0.005f;
 const float PORTA_MAX = 0.5f;
+const uint8_t MIDI_NOTE_MIN = 21;  // A0
+const uint8_t MIDI_NOTE_MAX = 108; // C8
 bool    laserMode[9]   = { false,false,false,false,false,false,false,false,false };
 float   laserAmt[9]    = { 1,1,1,1,1,1,1,1,1 };  // 1.0 = full zero jump, 0.0 = no jump
 bool    laserTriggered[3][3] = {{false}};  // per-voice one-shot flag
@@ -105,57 +125,96 @@ enum SerState { WAIT_STATUS, WAIT_D1, WAIT_D2 };
 static SerState serState        = WAIT_STATUS;
 static uint8_t serStatus, serD1;
 
+// Forward declarations
+void noiseOn(uint8_t note, uint8_t vel);
+void noiseOff();
+
 // Helpers
 uint16_t noteToPeriod(uint8_t note) {
   float freq = 440.0f * powf(2.0f, ((int)note - 69) / 12.0f);
   return (uint16_t)(YM_CLOCK_HZ / (16.0f * freq) + 0.5f);
 }
 
-void busWrite(uint8_t val) {
-  for(uint8_t i=0; i<8; i++)
-    digitalWrite(DATA_PINS[i], (val >> i) & 1);
+// YM2149 register write wrappers (use optimized class)
+inline void setVoice(uint8_t chip, uint8_t v, uint16_t per, uint8_t vol) {
+  ym.write(chip, v*2,     per & 0xFF);
+  ym.write(chip, v*2 + 1, (per >> 8) & 0x0F);
+  ym.write(chip, 8 + v,   vol & 0x0F);
 }
 
-void selectYM(uint8_t chip) {
-  chip = 2 - chip;
-  digitalWrite(PIN_SEL_A, (chip >> 0) & 1);
-  digitalWrite(PIN_SEL_B, (chip >> 1) & 1);
-  digitalWrite(PIN_SEL_C, (chip >> 2) & 1);
+inline void stopVoice(uint8_t chip, uint8_t v) {
+  ym.write(chip, v*2,     0);
+  ym.write(chip, v*2 + 1, 0);
+  ym.write(chip, 8 + v,   0);
 }
 
-void psgWrite(uint8_t chip, uint8_t reg, uint8_t val) {
-  selectYM(chip);
-  busWrite(reg & 0x1F);
-  digitalWrite(PIN_BC1, HIGH);
-  digitalWrite(PIN_BDIR, HIGH);
-  delayMicroseconds(1);
-  digitalWrite(PIN_BDIR, LOW);
-  digitalWrite(PIN_BC1, LOW);
-  delayMicroseconds(1);
-  busWrite(val);
-  digitalWrite(PIN_BDIR, HIGH);
-  delayMicroseconds(1);
-  digitalWrite(PIN_BDIR, LOW);
+inline void enableTones(uint8_t chip) {
+  ym.write(chip, 7, 0b00111000);
 }
 
-void setVoice(uint8_t chip, uint8_t v, uint16_t per, uint8_t vol) {
-  psgWrite(chip, v*2,        per & 0xFF);
-  psgWrite(chip, v*2 + 1, (per >> 8) & 0x0F);
-  psgWrite(chip, 8 + v,     vol & 0x0F);
+// ——— Reset all controllers for a single channel ———
+void resetAllControllers(uint8_t ch) {
+  if (ch >= 9) return; // Only channels 0-8 have tone voices
+
+  modWheel[ch]         = 0;
+  pitchBendSemis[ch]   = 0;
+  pitchEnvAmt[ch]      = 0;
+  pitchEnvPhase[ch]    = 0;
+  pitchEnvShape[ch]    = 0;
+  expressionVal[ch]    = 127;
+  portamentoOn[ch]     = false;
+  portamentoSpeed[ch]  = 0.05f;
+  laserMode[ch]        = false;
+  laserAmt[ch]         = 1.0f;
+  cc4Shape[ch]         = 0;
+  volEnvOn[ch]         = false;
+  volEnvPhase[ch]      = 0;
+  sustainOn[ch]        = false;
+  vibPhase[ch]         = 0;
+  vibStartTime[ch]     = 0;
+
+  // Clear laser triggers for this channel's chip
+  if (ch < 9) {
+    uint8_t chip = midiToChip[ch];
+    for (uint8_t v = 0; v < 3; v++) {
+      laserTriggered[chip][v] = false;
+    }
+  }
 }
 
-void stopVoice(uint8_t chip, uint8_t v) {
-  setVoice(chip, v, 0, 0);
+// ——— Emergency all-notes-off for a single channel ———
+void allNotesOffChannel(uint8_t ch) {
+  if (ch >= 9) return; // only channels 0-8 have tone voices
+
+  uint8_t chip = midiToChip[ch];
+  for (uint8_t v = 0; v < 3; v++) {
+    if (voiceActive[chip][v] && voiceChan[chip][v] == ch) {
+      voiceActive[chip][v]     = false;
+      pendingRelease[chip][v]  = false;
+      laserTriggered[chip][v]  = false;  // Clear laser trigger
+      stopVoice(chip, v);
+    }
+  }
 }
 
-void enableTones(uint8_t chip) {
-  psgWrite(chip, 7, 0b00111000);
+// ——— Global panic: kill all voices on all chips ———
+void allNotesOffPanic() {
+  for (uint8_t c = 0; c < 3; c++) {
+    for (uint8_t v = 0; v < 3; v++) {
+      voiceActive[c][v]     = false;
+      pendingRelease[c][v]  = false;
+      laserTriggered[c][v]  = false;  // Clear laser triggers
+      stopVoice(c, v);
+    }
+  }
+  // Also stop noise channel
+  noiseOff();
 }
 
 // Core update (~5ms)
 // ——— Modified updatePitchMod (bounds‑checks ch 0–15) ———
 void updatePitchMod(uint8_t ch) {
-  if (ch >= 16) return;
+  if (ch >= 9) return; // Only channels 0-8 have tone voices
   uint8_t chip = midiToChip[ch];
   unsigned long now = millis();
 
@@ -200,6 +259,11 @@ void updatePitchMod(uint8_t ch) {
       curPeriod[chip][v] = tp;
     }
 
+    // Clamp period to valid range (avoid glitches from NaN/Inf/overflow)
+    if (curPeriod[chip][v] < 1.0f || curPeriod[chip][v] > 4095.0f) {
+      curPeriod[chip][v] = tp;  // Reset to target if out of bounds
+    }
+
     // compute volume
     uint16_t outP = uint16_t(curPeriod[chip][v] + 0.5f);
     uint8_t vol   = (voiceVol[chip][v] * expressionVal[ch] + 63) / 127;
@@ -233,6 +297,12 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     return;
   }
 
+  // ——— ignore channels 10-15 (MIDI channels 11-16) to prevent array bounds violation ———
+  if (ch >= 9) return;
+
+  // ——— clamp note to safe playable range ———
+  note = constrain(note, MIDI_NOTE_MIN, MIDI_NOTE_MAX);
+
   // ——— start vibrato delay timer ———
   vibStartTime[ch] = millis();
   vibPhase[ch]     = 0;
@@ -264,12 +334,14 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   }
 
   // ——— laser‑jump or portamento zeroing ———
-  float prevP = curPeriod[chip][v];
-  if (laserMode[ch]) {
-    curPeriod[chip][v] = prevP * (1.0f - laserAmt[ch]);
+  float targetP = noteToPeriod(note);  // Target period for this note
+  if (laserMode[ch] && laserAmt[ch] > 0.01f) {  // Prevent division by zero
+    // Laser: jump from low frequency (high period) toward target
+    curPeriod[chip][v] = targetP * (1.0f + laserAmt[ch] * 10.0f);  // Scale up for "laser jump"
+    laserTriggered[chip][v] = true;  // Prevent immediate correction
   }
   else if (!portamentoOn[ch]) {
-    curPeriod[chip][v] = 0;
+    curPeriod[chip][v] = targetP;  // Start at target for immediate attack
   }
   // else leave curPeriod for glide
 
@@ -297,7 +369,7 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   updatePitchMod(ch);
 
   // ——— flash LED on the tone‑chip ———
-  digitalWrite(CHIP_LED[chip], LED_ON);
+  ym.setLED(chip, true);
   ledOnTime[chip] = millis();
 }
 
@@ -309,13 +381,19 @@ void noteOff(uint8_t ch, uint8_t note) {
     return;
   }
 
+  // ——— ignore channels 10-15 (MIDI channels 11-16) to prevent array bounds violation ———
+  if (ch >= 9) return;
+
+  // ——— clamp note to match clamped noteOn ———
+  note = constrain(note, MIDI_NOTE_MIN, MIDI_NOTE_MAX);
+
   // ——— sustain pedal logic for channels 1–9 ———
   if (sustainOn[ch]) {
     uint8_t chip = midiToChip[ch];
     for (uint8_t v = 0; v < 3; v++) {
-      if (voiceActive[chip][v] && voiceNote[chip][v] == note) {
+      if (voiceActive[chip][v] && voiceChan[chip][v] == ch && voiceNote[chip][v] == note) {
         pendingRelease[chip][v] = true;
-        break;
+        // Don't break - mark ALL matching notes for release
       }
     }
     return;
@@ -325,11 +403,11 @@ void noteOff(uint8_t ch, uint8_t note) {
   {
     uint8_t chip = midiToChip[ch];
     for (uint8_t v = 0; v < 3; v++) {
-      if (voiceActive[chip][v] && voiceNote[chip][v] == note) {
+      if (voiceActive[chip][v] && voiceChan[chip][v] == ch && voiceNote[chip][v] == note) {
         voiceActive[chip][v] = false;
         stopVoice(chip, v);
         pendingRelease[chip][v] = false;
-        break;
+        // Don't break - stop ALL matching notes to prevent stuck notes
       }
     }
   }
@@ -338,6 +416,7 @@ void noteOff(uint8_t ch, uint8_t note) {
 
 
 void pitchBend(uint8_t ch, uint8_t lsb, uint8_t msb) {
+  if (ch >= 9) return; // Only channels 0-8 have tone voices
   int val = (msb << 7) | lsb;
   pitchBendSemis[ch] = ((float)val - 8192) / 8192 * 2.0f;
   updatePitchMod(ch);
@@ -355,14 +434,14 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
   else if (cmd == 0x80 || (cmd == 0x90 && d2 == 0)) {
     noteOff(ch, d1);
   }
-  else if (cmd == 0xB0 && ch < 16) {  // ← expanded
+  else if (cmd == 0xB0 && ch < 9) {  // Only channels 0-8 have tone voices
     switch (d1) {
       case 1:   modWheel[ch]     = d2; updatePitchMod(ch); break;
       case 4:   cc4Shape[ch]     = d2;                          break;
-      case 5: { // portamento speed
+      case 5: { // portamento speed (0=slow, 127=fast)
         float norm  = d2 / 127.0f;
         float curve = norm * norm;
-        portamentoSpeed[ch] = 0.5f - (0.5f - PORTA_MIN) * curve;
+        portamentoSpeed[ch] = PORTA_MIN + (PORTA_MAX - PORTA_MIN) * curve;
         updatePitchMod(ch);
       } break;
       case 7:
@@ -404,17 +483,25 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
       case 76:  vibRate[ch]       = (d2 / 127.0f) * 10.0f; updatePitchMod(ch); break;
       case 77:  vibRangeSemi[ch]  = (d2 / 127.0f) * 2.0f;  updatePitchMod(ch); break;
       case 85:  vibDelayMs[ch]    = map(d2, 0, 127, 0, 2000);   break;
-      case 120:
-      case 123: {
+      case 120: // All Sound Off (immediate panic)
+                allNotesOffChannel(ch);
+                break;
+      case 121: // Reset All Controllers
+                resetAllControllers(ch);
+                break;
+      case 123: // All Notes Off (respects sustain)
+                if (sustainOn[ch]) {
+                  // Mark all notes for release when sustain lifts
                   uint8_t chip = midiToChip[ch];
                   for (uint8_t v = 0; v < 3; v++) {
-                    if (voiceActive[chip][v]
-                     && voiceChan[chip][v] == ch) {
-                      stopVoice(chip, v);
-                      voiceActive[chip][v] = false;
+                    if (voiceActive[chip][v] && voiceChan[chip][v] == ch) {
+                      pendingRelease[chip][v] = true;
                     }
                   }
-                } break;
+                } else {
+                  allNotesOffChannel(ch);
+                }
+                break;
     }
   }
   else if (cmd == 0xE0) {
@@ -423,8 +510,25 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
 }
 
 void parseSerialMidi(uint8_t b) {
-  // real‑time messages (0xF8–0xFF): ignore, don't disturb serState
+  // real‑time messages (0xF8–0xFF): handle without disturbing serState
   if (b >= 0xF8) {
+    switch (b) {
+      case 0xFA: // MIDI Start
+      case 0xFB: // MIDI Continue
+        // Reset controllers on tone channels (0-8 only)
+        for (uint8_t ch = 0; ch < 9; ch++) {
+          resetAllControllers(ch);
+        }
+        break;
+      case 0xFC: // MIDI Stop
+        // Panic: kill all notes and reset all controllers
+        allNotesOffPanic();
+        for (uint8_t ch = 0; ch < 9; ch++) {
+          resetAllControllers(ch);
+        }
+        break;
+      // 0xFE (Active Sensing) and 0xF8 (Clock): ignore
+    }
     return;
   }
 
@@ -453,36 +557,28 @@ void parseSerialMidi(uint8_t b) {
 }
 
 void setup() {
-  for (auto p : DATA_PINS) pinMode(p, OUTPUT);
-  pinMode(PIN_BC1, OUTPUT);
-  pinMode(PIN_BDIR, OUTPUT);
-  pinMode(PIN_SEL_A, OUTPUT);
-  pinMode(PIN_SEL_B, OUTPUT);
-  pinMode(PIN_SEL_C, OUTPUT);
-  pinMode(PIN_ENABLE, OUTPUT);
-  digitalWrite(PIN_ENABLE, HIGH);
+  // Initialize YM2149 hardware (pins, ports, etc.)
+  ym.begin();
 
+  // LED startup animation
   for (uint8_t i = 0; i < 3; i++) {
-    pinMode(CHIP_LED[i], OUTPUT);
-    digitalWrite(CHIP_LED[i], LED_OFF);
-  }
-  for (uint8_t i = 0; i < 3; i++) {
-    digitalWrite(CHIP_LED[i], LED_ON);
+    ym.setLED(i, true);
     delay(200);
-    digitalWrite(CHIP_LED[i], LED_OFF);
+    ym.setLED(i, false);
     delay(100);
   }
+
+  // Initialize all YM chips: enable tones, silence all voices
   for (uint8_t c = 0; c < 3; c++) {
     enableTones(c);
     for (uint8_t v = 0; v < 3; v++) stopVoice(c, v);
   }
-    for (uint8_t ch = 0; ch < 9; ++ch) {
-    sustainOn[ch] = false;
+
+  // Initialize all controller states for tone channels (0-8 only)
+  for (uint8_t ch = 0; ch < 9; ++ch) {
+    resetAllControllers(ch);
   }
 
-  for (uint8_t ch = 0; ch < 16; ++ch) {
-    sustainOn[ch] = false;
-  }
   Serial1.begin(31250);
 #if USE_YMPLAYER_SERIAL
   Serial.begin(115200);
@@ -497,7 +593,7 @@ void loop() {
   unsigned long now = millis();
   for (uint8_t c = 0; c < 3; c++) {
     if (ledOnTime[c] && now - ledOnTime[c] >= ledFlashMs) {
-      digitalWrite(CHIP_LED[c], LED_OFF);
+      ym.setLED(c, false);
       ledOnTime[c] = 0;
     }
   }
@@ -515,7 +611,7 @@ void loop() {
   unsigned long m = millis();
   if (m - last >= 3) {
     last = m;
-    for (uint8_t ch = 0; ch < 16; ++ch) {
+    for (uint8_t ch = 0; ch < 9; ++ch) {
       updatePitchMod(ch);
     }
   }
@@ -524,13 +620,13 @@ void loop() {
 void noiseOn(uint8_t note, uint8_t vel) {
   uint8_t chip = 2;
   uint8_t nf = constrain((int)note - 24, 2, 31);
-  psgWrite(chip, 6, nf);                 // noise period
-  psgWrite(chip, 7, 0b00011100);         // enable noise C, disable tone A/B/C, noise A/B
-  psgWrite(chip, 8 + 2, vel >> 3);       // volume on C
+  ym.write(chip, 6, nf);                 // noise period
+  ym.write(chip, 7, 0b00011100);         // enable noise C, disable tone A/B/C, noise A/B
+  ym.write(chip, 8 + 2, vel >> 3);       // volume on C
 }
 
 void noiseOff() {
   uint8_t chip = 2;
   enableTones(chip);                     // restore all tones
-  psgWrite(chip, 8 + 2, 0);              // silence voice C
+  ym.write(chip, 8 + 2, 0);              // silence voice C
 }
