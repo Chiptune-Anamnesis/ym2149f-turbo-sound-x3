@@ -4,7 +4,7 @@
 #include "YM2149.h"
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MIDI STABILITY FIXES v1.44
+// MIDI STABILITY FIXES v1.49
 // ═══════════════════════════════════════════════════════════════════════════
 // ✓ Fixed portamento speed scaling (was inverted)
 // ✓ Added note range clamping (A0-C8) to prevent glitchy out-of-bounds periods
@@ -26,6 +26,16 @@
 //   - Prevents array bounds violation when MIDI channels 11-16 send note messages
 //   - These channels were reading garbage from midiToChip[10-15] out-of-bounds
 //   - Caused wild behavior, stuck notes, and memory corruption
+// ✓ Fixed LED polarity (inverted YM2149 class setLED logic)
+//   - LEDs were always on and turned off on notes
+//   - Now correctly off by default and flash on when notes hit
+// ✓ Simplified noise channel cleanup in noiseOff()
+//   - Just mutes volume (reg 10) - that's what stops it between drum hits
+//   - No mixer or register manipulation needed
+//   - Simple, reliable, matches how noiseOn() works (volume controls sound)
+// ✓ Added LED flash for noise channel (chip 2)
+//   - LED2 now flashes when channel 10 (noise) notes are received
+//   - Consistent with tone channel LED behavior
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Toggle YM file streaming via USB CDC
@@ -33,6 +43,9 @@
 #if USE_YMPLAYER_SERIAL
   #include "YMPlayerSerial.h"
 #endif
+
+// Toggle noise channel support (MIDI channel 10)
+#define ENABLE_NOISE_CHANNEL 0
 
 #define LED_ON  LOW
 #define LED_OFF HIGH
@@ -126,8 +139,10 @@ static SerState serState        = WAIT_STATUS;
 static uint8_t serStatus, serD1;
 
 // Forward declarations
+#if ENABLE_NOISE_CHANNEL
 void noiseOn(uint8_t note, uint8_t vel);
 void noiseOff();
+#endif
 
 // Helpers
 uint16_t noteToPeriod(uint8_t note) {
@@ -207,8 +222,10 @@ void allNotesOffPanic() {
       stopVoice(c, v);
     }
   }
+#if ENABLE_NOISE_CHANNEL
   // Also stop noise channel
   noiseOff();
+#endif
 }
 
 // Core update (~5ms)
@@ -291,17 +308,20 @@ void updatePitchMod(uint8_t ch) {
 }
 
 void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
+#if ENABLE_NOISE_CHANNEL
   // ——— special noise on MIDI Channel 10 (ch==9) using chip 2 ———
   if (ch == 9) {
     noiseOn(note, vel);
     return;
   }
+#endif
 
-  // ——— ignore channels 10-15 (MIDI channels 11-16) to prevent array bounds violation ———
+  // ——— ignore channels 9-15 (MIDI channels 10-16) to prevent array bounds violation ———
   if (ch >= 9) return;
 
-  // ——— clamp note to safe playable range ———
-  note = constrain(note, MIDI_NOTE_MIN, MIDI_NOTE_MAX);
+  // ——— transpose note to safe playable range (preserve pitch class) ———
+  while (note < MIDI_NOTE_MIN) note += 12;
+  while (note > MIDI_NOTE_MAX) note -= 12;
 
   // ——— start vibrato delay timer ———
   vibStartTime[ch] = millis();
@@ -368,24 +388,27 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   // ——— apply initial pitch (with laser/portamento) ———
   updatePitchMod(ch);
 
-  // ——— flash LED on the tone‑chip ———
-  ym.setLED(chip, true);
+  // ——— flash LED on the tone‑chip (inverted logic: false=on) ———
+  ym.setLED(chip, false);  // Turn ON
   ledOnTime[chip] = millis();
 }
 
 
 void noteOff(uint8_t ch, uint8_t note) {
+#if ENABLE_NOISE_CHANNEL
   // ——— special noise-off on MIDI Channel 10 (ch==9) using chip 2 ———
   if (ch == 9) {
     noiseOff();
     return;
   }
+#endif
 
-  // ——— ignore channels 10-15 (MIDI channels 11-16) to prevent array bounds violation ———
+  // ——— ignore channels 9-15 (MIDI channels 10-16) to prevent array bounds violation ———
   if (ch >= 9) return;
 
-  // ——— clamp note to match clamped noteOn ———
-  note = constrain(note, MIDI_NOTE_MIN, MIDI_NOTE_MAX);
+  // ——— transpose note to match noteOn transposition ———
+  while (note < MIDI_NOTE_MIN) note += 12;
+  while (note > MIDI_NOTE_MAX) note -= 12;
 
   // ——— sustain pedal logic for channels 1–9 ———
   if (sustainOn[ch]) {
@@ -560,11 +583,11 @@ void setup() {
   // Initialize YM2149 hardware (pins, ports, etc.)
   ym.begin();
 
-  // LED startup animation
+  // LED startup animation (inverted logic: false=on, true=off)
   for (uint8_t i = 0; i < 3; i++) {
-    ym.setLED(i, true);
+    ym.setLED(i, false);  // Turn ON
     delay(200);
-    ym.setLED(i, false);
+    ym.setLED(i, true);   // Turn OFF
     delay(100);
   }
 
@@ -593,7 +616,7 @@ void loop() {
   unsigned long now = millis();
   for (uint8_t c = 0; c < 3; c++) {
     if (ledOnTime[c] && now - ledOnTime[c] >= ledFlashMs) {
-      ym.setLED(c, false);
+      ym.setLED(c, true);  // Turn OFF (inverted logic)
       ledOnTime[c] = 0;
     }
   }
@@ -617,16 +640,22 @@ void loop() {
   }
 }
 
+#if ENABLE_NOISE_CHANNEL
 void noiseOn(uint8_t note, uint8_t vel) {
   uint8_t chip = 2;
   uint8_t nf = constrain((int)note - 24, 2, 31);
   ym.write(chip, 6, nf);                 // noise period
   ym.write(chip, 7, 0b00011100);         // enable noise C, disable tone A/B/C, noise A/B
   ym.write(chip, 8 + 2, vel >> 3);       // volume on C
+
+  // ——— flash LED on chip 2 for noise (inverted logic: false=on) ———
+  ym.setLED(chip, false);  // Turn ON
+  ledOnTime[chip] = millis();
 }
 
 void noiseOff() {
   uint8_t chip = 2;
-  enableTones(chip);                     // restore all tones
-  ym.write(chip, 8 + 2, 0);              // silence voice C
+  ym.write(chip, 8 + 2, 0);              // Mute volume
+  ym.write(chip, 7, 0b00111000);         // Disable noise, enable tones (same as enableTones)
 }
+#endif
