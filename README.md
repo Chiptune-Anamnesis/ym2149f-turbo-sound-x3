@@ -21,33 +21,22 @@ An Arduino Pro Micro-based polyphonic synthesizer using three Yamaha YM2149F sou
 
 #### 2. Division by Zero in Laser Mode
 **Problem:** Laser mode caused stuck glitchy notes that wouldn't stop, even with MIDI Stop.
-- `curPeriod = targetP / laserAmt` when `laserAmt = 0` produced NaN/Infinity
 - Invalid period values propagated through the voice state
 - Caused unstoppable glitchy "portamento/laser" effect
 
 **Fix:** Changed laser calculation to prevent division by zero:
-- Added `laserAmt > 0.01f` safety check
-- Changed from division to multiplication: `curPeriod = targetP * (1.0f + laserAmt * 10.0f)`
-- Added period clamping (1.0-4095.0) to catch NaN/Infinity/overflow
-- Fixed immediate attack to use `targetP` instead of 0
+- Added laserAmt safety check
+- Added period clamping
 
 #### 3. Portamento Speed Scaling
 **Problem:** Portamento speed was inverted (CC5: 0=fast, 127=slow instead of 0=slow, 127=fast).
 
-**Fix:** Applied quadratic curve to CC5 mapping:
-```cpp
-float norm  = d2 / 127.0f;
-float curve = norm * norm;
-portamentoSpeed[ch] = PORTA_MIN + (PORTA_MAX - PORTA_MIN) * curve;
-```
+**Fix:** Applied quadratic curve to CC5 mapping
 
 #### 4. Note Range Validation
 **Problem:** Out-of-bounds MIDI notes caused invalid period calculations and glitches.
 
-**Fix:** Added note clamping to valid range:
-- `MIDI_NOTE_MIN = 21` (A0)
-- `MIDI_NOTE_MAX = 108` (C8)
-- Applied in both `noteOn()` and `noteOff()`
+**Fix:** Added note clamping to valid range
 
 ### Enhancements
 
@@ -71,13 +60,7 @@ Changed `noteOff()` to release **ALL** matching notes instead of just the first 
 - Removed `break` statements in voice-scanning loops
 
 #### YM2149 Class Integration
-Replaced slow `digitalWrite()` calls with optimized class methods:
-- Direct port manipulation (PORTB/PORTF writes)
-- ATOMIC_BLOCK for interrupt safety
-- Chip caching to avoid redundant selection
-- Precise timing with `_NOP()` instead of `delayMicroseconds()`
-- ~10x performance improvement
----
+Replaced slow `digitalWrite()` calls with optimized class methods
 
 ## Features
 
