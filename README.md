@@ -229,6 +229,9 @@ The YM2149F has only 16 volume levels (0-15), which can make soft MIDI notes ina
 - CC 65 – Portamento On/Off → ≥ 64 enables glide
 - CC 68 – Laser-Jump On/Off → ≥ 64 one-shot “laser” jump on note-on with Portamento on CC64 and Portamento Time CC5.
 - CC 69 – Laser-Jump Amount → 0.0–1.0 blend toward zero for the laser effect
+- CC 70 – 0-42: Semi-poly (chip-based, channels share 3 voices per chip)
+- CC 70 – 43-84: Full poly (global pool, any channel can use any voice)
+- CC 70 – 85-127: Mono (1:1 channel-to-voice, no stealing)
 - CC 76 – Vibrato Rate → 0–10 Hz LFO speed
 - CC 77 – Vibrato Depth → 0–2 semitone LFO range
 - CC 85 – Vibrato Delay → delay before LFO engages
