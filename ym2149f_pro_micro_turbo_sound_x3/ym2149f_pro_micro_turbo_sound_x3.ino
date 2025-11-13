@@ -3,6 +3,41 @@
 #include <math.h>
 #include "YM2149.h"
 
+// ═══════════════════════════════════════════════════════════════════════════
+// MIDI STABILITY FIXES v1.49
+// ═══════════════════════════════════════════════════════════════════════════
+// ✓ Fixed portamento speed scaling (was inverted)
+// ✓ Added note range clamping (A0-C8) to prevent glitchy out-of-bounds periods
+// ✓ Implemented MIDI Stop/Start/Continue (0xFC/0xFA/0xFB) handling
+// ✓ Added resetAllControllers() to clear stuck CC states
+// ✓ Added allNotesOffPanic() for emergency voice clearing
+// ✓ Implemented CC121 (Reset All Controllers) support
+// ✓ Improved noteOff to release ALL matching notes (prevents stuck notes)
+// ✓ Added channel validation to noteOff sustain logic
+// ✓ All controllers initialized via resetAllControllers() in setup()
+// ✓ CRITICAL: Fixed array bounds - only channels 0-8 are valid for tone generation
+// ✓ OPTIMIZATION: Using YM2149 class with direct port manipulation + atomic blocks
+// ✓ CRITICAL: Fixed laser mode division-by-zero bug causing NaN/Infinity stuck notes
+//   - Changed from curPeriod = targetP / laserAmt to multiplication formula
+//   - Added laserAmt > 0.01f check to prevent division by zero
+//   - Added period clamping (1.0-4095.0) to catch NaN/Infinity/overflow values
+//   - Fixed immediate attack to use targetP instead of 0
+// ✓ CRITICAL: Added channel validation to noteOn, noteOff, and pitchBend
+//   - Prevents array bounds violation when MIDI channels 11-16 send note messages
+//   - These channels were reading garbage from midiToChip[10-15] out-of-bounds
+//   - Caused wild behavior, stuck notes, and memory corruption
+// ✓ Fixed LED polarity (inverted YM2149 class setLED logic)
+//   - LEDs were always on and turned off on notes
+//   - Now correctly off by default and flash on when notes hit
+// ✓ Simplified noise channel cleanup in noiseOff()
+//   - Just mutes volume (reg 10) - that's what stops it between drum hits
+//   - No mixer or register manipulation needed
+//   - Simple, reliable, matches how noiseOn() works (volume controls sound)
+// ✓ Added LED flash for noise channel (chip 2)
+//   - LED2 now flashes when channel 10 (noise) notes are received
+//   - Consistent with tone channel LED behavior
+// ═══════════════════════════════════════════════════════════════════════════
+
 // Toggle YM file streaming via USB CDC
 #define USE_YMPLAYER_SERIAL 0
 #if USE_YMPLAYER_SERIAL
@@ -13,13 +48,16 @@
 #define ENABLE_NOISE_CHANNEL 0
 
 // Velocity curve configuration
-#define VELOCITY_GAMMA  0.4f    // Gamma curve (lower = more boost for soft notes, try 0.4-0.7)
-#define VELOCITY_MIN    3       // Minimum YM volume (0-15, try 3-4 for audible soft notes)
+#define VELOCITY_GAMMA  0.3f    // Gamma curve (lower = more boost for soft notes, try 0.4-0.7)
+#define VELOCITY_MIN    4       // Minimum YM volume (0-15, try 3-4 for audible soft notes)
 #define VELOCITY_MAX    15      // Maximum YM volume (1-15, typically 15)
 
 // Volume envelope/expression control
 #define EXPRESSION_AMOUNT 0.3f  // How much CC7/CC11 affects volume (0.0=none, 1.0=full, try 0.3-0.5 for compression)
 #define USE_CC4_ENVELOPE  1     // 0 = bypass CC4 volume envelope, 1 = enable
+
+// Global octave transpose (in semitones: -12 = down 1 octave, -24 = down 2 octaves, 0 = no shift)
+#define OCTAVE_SHIFT -12        // Default: shift down 1 octave
 
 #define LED_ON  LOW
 #define LED_OFF HIGH
@@ -74,7 +112,7 @@ bool    portamentoOn[9]        = {false};
 float   portamentoSpeed[9]     = {0.05f,0.05f,0.05f,0.05f,0.05f,0.05f,0.05f,0.05f,0.05f};
 const float PORTA_MIN = 0.005f;
 const float PORTA_MAX = 0.5f;
-const uint8_t MIDI_NOTE_MIN = 21;  // A0
+const uint8_t MIDI_NOTE_MIN = 9;   // A-1 = 13.75 Hz (extended bass range)
 const uint8_t MIDI_NOTE_MAX = 108; // C8
 bool    laserMode[9]   = { false,false,false,false,false,false,false,false,false };
 float   laserAmt[9]    = { 1,1,1,1,1,1,1,1,1 };  // 1.0 = full zero jump, 0.0 = no jump
@@ -295,6 +333,9 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   // ——— ignore channels 9-15 (MIDI channels 10-16) to prevent array bounds violation ———
   if (ch >= 9) return;
 
+  // ——— apply global octave shift ———
+  note += OCTAVE_SHIFT;
+
   // ——— transpose note to safe playable range (preserve pitch class) ———
   while (note < MIDI_NOTE_MIN) note += 12;
   while (note > MIDI_NOTE_MAX) note -= 12;
@@ -382,6 +423,9 @@ void noteOff(uint8_t ch, uint8_t note) {
 
   // ——— ignore channels 9-15 (MIDI channels 10-16) to prevent array bounds violation ———
   if (ch >= 9) return;
+
+  // ——— apply global octave shift (must match noteOn) ———
+  note += OCTAVE_SHIFT;
 
   // ——— transpose note to match noteOn transposition ———
   while (note < MIDI_NOTE_MIN) note += 12;
