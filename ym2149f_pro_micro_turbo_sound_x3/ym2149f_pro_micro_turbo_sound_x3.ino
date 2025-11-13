@@ -25,7 +25,7 @@
 #define OCTAVE_SHIFT 0
 
 // Polyphony mode: 0 = Semi-poly (chip-based), 1 = Full poly (global voice pool), 2 = Mono (1:1 channel-to-voice)
-uint8_t polyMode = 1;  // Runtime switchable via CC70
+uint8_t polyMode = 0;  // Runtime switchable via CC70
 
 #define LED_ON  LOW
 #define LED_OFF HIGH
