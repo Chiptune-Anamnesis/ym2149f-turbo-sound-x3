@@ -3,6 +3,41 @@
 #include <math.h>
 #include "YM2149.h"
 
+// ═══════════════════════════════════════════════════════════════════════════
+// MIDI STABILITY FIXES v1.49
+// ═══════════════════════════════════════════════════════════════════════════
+// ✓ Fixed portamento speed scaling (was inverted)
+// ✓ Added note range clamping (A0-C8) to prevent glitchy out-of-bounds periods
+// ✓ Implemented MIDI Stop/Start/Continue (0xFC/0xFA/0xFB) handling
+// ✓ Added resetAllControllers() to clear stuck CC states
+// ✓ Added allNotesOffPanic() for emergency voice clearing
+// ✓ Implemented CC121 (Reset All Controllers) support
+// ✓ Improved noteOff to release ALL matching notes (prevents stuck notes)
+// ✓ Added channel validation to noteOff sustain logic
+// ✓ All controllers initialized via resetAllControllers() in setup()
+// ✓ CRITICAL: Fixed array bounds - only channels 0-8 are valid for tone generation
+// ✓ OPTIMIZATION: Using YM2149 class with direct port manipulation + atomic blocks
+// ✓ CRITICAL: Fixed laser mode division-by-zero bug causing NaN/Infinity stuck notes
+//   - Changed from curPeriod = targetP / laserAmt to multiplication formula
+//   - Added laserAmt > 0.01f check to prevent division by zero
+//   - Added period clamping (1.0-4095.0) to catch NaN/Infinity/overflow values
+//   - Fixed immediate attack to use targetP instead of 0
+// ✓ CRITICAL: Added channel validation to noteOn, noteOff, and pitchBend
+//   - Prevents array bounds violation when MIDI channels 11-16 send note messages
+//   - These channels were reading garbage from midiToChip[10-15] out-of-bounds
+//   - Caused wild behavior, stuck notes, and memory corruption
+// ✓ Fixed LED polarity (inverted YM2149 class setLED logic)
+//   - LEDs were always on and turned off on notes
+//   - Now correctly off by default and flash on when notes hit
+// ✓ Simplified noise channel cleanup in noiseOff()
+//   - Just mutes volume (reg 10) - that's what stops it between drum hits
+//   - No mixer or register manipulation needed
+//   - Simple, reliable, matches how noiseOn() works (volume controls sound)
+// ✓ Added LED flash for noise channel (chip 2)
+//   - LED2 now flashes when channel 10 (noise) notes are received
+//   - Consistent with tone channel LED behavior
+// ═══════════════════════════════════════════════════════════════════════════
+
 // Toggle YM file streaming via USB CDC
 #define USE_YMPLAYER_SERIAL 0
 #if USE_YMPLAYER_SERIAL
@@ -23,6 +58,9 @@
 
 // Global octave transpose (in semitones: -12 = down 1 octave, -24 = down 2 octaves, 0 = no shift)
 #define OCTAVE_SHIFT 0
+
+// Polyphony mode: 0 = Semi-poly (chip-based), 1 = Full poly (global voice pool), 2 = Mono (1:1 channel-to-voice)
+uint8_t polyMode = 1;  // Runtime switchable via CC70
 
 #define LED_ON  LOW
 #define LED_OFF HIGH
@@ -310,14 +348,50 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   vibPhase[ch]     = 0;
 
   // ——— find a free tone‑voice or round‑robin ———
-  uint8_t chip = midiToChip[ch];
+  uint8_t chip;
   uint8_t v;
-  for (v = 0; v < 3; v++) {
-    if (!voiceActive[chip][v]) break;
+
+  if (polyMode == 2) {
+    // ——— MONO MODE: 1:1 channel-to-voice mapping (no stealing) ———
+    chip = midiToChip[ch];
+    v = ch % 3;  // Voice index within chip (0-2)
+    // Each channel owns exactly one voice - just replace whatever's playing
   }
-  if (v >= 3) {
-    v = nextVoice[chip];
-    nextVoice[chip] = (v + 1) % 3;
+  else if (polyMode == 1) {
+    // ——— FULL POLYPHONY: search all 9 voices globally ———
+    chip = 0xFF;  // Mark as not found
+    v = 0xFF;
+
+    // First pass: look for any free voice across all chips
+    for (uint8_t c = 0; c < 3; c++) {
+      for (uint8_t voice = 0; voice < 3; voice++) {
+        if (!voiceActive[c][voice]) {
+          chip = c;
+          v = voice;
+          goto voice_found;
+        }
+      }
+    }
+
+    // No free voice: steal the oldest (round-robin across all 9 voices)
+    if (chip == 0xFF) {
+      static uint8_t globalNextVoice = 0;
+      chip = globalNextVoice / 3;  // 0-2
+      v = globalNextVoice % 3;     // 0-2
+      globalNextVoice = (globalNextVoice + 1) % 9;
+    }
+  voice_found:;
+  }
+  else {
+    // ——— SEMI-POLYPHONY: search only assigned chip (current behavior) ———
+    chip = midiToChip[ch];
+    for (v = 0; v < 3; v++) {
+      if (!voiceActive[chip][v]) break;
+    }
+    if (v >= 3) {
+      v = nextVoice[chip];
+      nextVoice[chip] = (v + 1) % 3;
+    }
   }
 
   // ——— assign voice parameters ———
@@ -398,25 +472,65 @@ void noteOff(uint8_t ch, uint8_t note) {
 
   // ——— sustain pedal logic for channels 1–9 ———
   if (sustainOn[ch]) {
-    uint8_t chip = midiToChip[ch];
-    for (uint8_t v = 0; v < 3; v++) {
+    if (polyMode == 2) {
+      // MONO MODE: direct channel-to-voice mapping
+      uint8_t chip = midiToChip[ch];
+      uint8_t v = ch % 3;
       if (voiceActive[chip][v] && voiceChan[chip][v] == ch && voiceNote[chip][v] == note) {
         pendingRelease[chip][v] = true;
-        // Don't break - mark ALL matching notes for release
+      }
+    }
+    else if (polyMode == 1) {
+      // FULL POLY: Search all chips/voices
+      for (uint8_t c = 0; c < 3; c++) {
+        for (uint8_t v = 0; v < 3; v++) {
+          if (voiceActive[c][v] && voiceChan[c][v] == ch && voiceNote[c][v] == note) {
+            pendingRelease[c][v] = true;
+          }
+        }
+      }
+    } else {
+      // SEMI-POLY: Search only assigned chip
+      uint8_t chip = midiToChip[ch];
+      for (uint8_t v = 0; v < 3; v++) {
+        if (voiceActive[chip][v] && voiceChan[chip][v] == ch && voiceNote[chip][v] == note) {
+          pendingRelease[chip][v] = true;
+        }
       }
     }
     return;
   }
 
   // ——— immediate note-off for channels 1–9 ———
-  {
+  if (polyMode == 2) {
+    // MONO MODE: direct channel-to-voice mapping
+    uint8_t chip = midiToChip[ch];
+    uint8_t v = ch % 3;
+    if (voiceActive[chip][v] && voiceChan[chip][v] == ch && voiceNote[chip][v] == note) {
+      voiceActive[chip][v] = false;
+      stopVoice(chip, v);
+      pendingRelease[chip][v] = false;
+    }
+  }
+  else if (polyMode == 1) {
+    // FULL POLY: Search all chips/voices
+    for (uint8_t c = 0; c < 3; c++) {
+      for (uint8_t v = 0; v < 3; v++) {
+        if (voiceActive[c][v] && voiceChan[c][v] == ch && voiceNote[c][v] == note) {
+          voiceActive[c][v] = false;
+          stopVoice(c, v);
+          pendingRelease[c][v] = false;
+        }
+      }
+    }
+  } else {
+    // SEMI-POLY: Search only assigned chip
     uint8_t chip = midiToChip[ch];
     for (uint8_t v = 0; v < 3; v++) {
       if (voiceActive[chip][v] && voiceChan[chip][v] == ch && voiceNote[chip][v] == note) {
         voiceActive[chip][v] = false;
         stopVoice(chip, v);
         pendingRelease[chip][v] = false;
-        // Don't break - stop ALL matching notes to prevent stuck notes
       }
     }
   }
@@ -489,6 +603,12 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
                 break;
       case 68:  laserMode[ch]     = (d2 >= 64);                 break;
       case 69:  laserAmt[ch]      = d2 / 127.0f;                break;
+      case 70:  // Polyphony mode (global setting, any channel can set it)
+                // 0-42: Semi-poly, 43-84: Full poly, 85-127: Mono
+                if (d2 >= 85) polyMode = 2;      // Mono
+                else if (d2 >= 43) polyMode = 1; // Full poly
+                else polyMode = 0;               // Semi-poly
+                break;
       case 76:  vibRate[ch]       = (d2 / 127.0f) * 10.0f; updatePitchMod(ch); break;
       case 77:  vibRangeSemi[ch]  = (d2 / 127.0f) * 2.0f;  updatePitchMod(ch); break;
       case 85:  vibDelayMs[ch]    = map(d2, 0, 127, 0, 2000);   break;
