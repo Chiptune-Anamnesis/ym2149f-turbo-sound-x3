@@ -26,7 +26,7 @@
 #define OCTAVE_SHIFT 0
 
 // Polyphony mode: 0 = Semi-poly (chip-based), 1 = Full poly (global voice pool), 2 = Mono (1:1 channel-to-voice)
-uint8_t polyMode = 0;  // Runtime switchable via CC70
+uint8_t polyMode = 1;  // Runtime switchable via CC70
 
 #define LED_ON  LOW
 #define LED_OFF HIGH
@@ -180,13 +180,26 @@ void resetAllControllers(uint8_t ch) {
 void allNotesOffChannel(uint8_t ch) {
   if (ch >= 9) return; // only channels 0-8 have tone voices
 
-  uint8_t chip = midiToChip[ch];
-  for (uint8_t v = 0; v < 3; v++) {
-    if (voiceActive[chip][v] && voiceChan[chip][v] == ch) {
-      voiceActive[chip][v]     = false;
-      pendingRelease[chip][v]  = false;
-      laserTriggered[chip][v]  = false;  // Clear laser trigger
-      stopVoice(chip, v);
+  // Determine which chips to search based on poly mode
+  uint8_t startChip, endChip;
+  if (polyMode == 1) {
+    // FULL POLY: search all chips
+    startChip = 0;
+    endChip = 3;
+  } else {
+    // SEMI-POLY or MONO: only search assigned chip
+    startChip = midiToChip[ch];
+    endChip = startChip + 1;
+  }
+
+  for (uint8_t chip = startChip; chip < endChip; chip++) {
+    for (uint8_t v = 0; v < 3; v++) {
+      if (voiceActive[chip][v] && voiceChan[chip][v] == ch) {
+        voiceActive[chip][v]     = false;
+        pendingRelease[chip][v]  = false;
+        laserTriggered[chip][v]  = false;  // Clear laser trigger
+        stopVoice(chip, v);
+      }
     }
   }
 }
@@ -211,7 +224,6 @@ void allNotesOffPanic() {
 // ——— Modified updatePitchMod (bounds‑checks ch 0–15) ———
 void updatePitchMod(uint8_t ch) {
   if (ch >= 9) return; // Only channels 0-8 have tone voices
-  uint8_t chip = midiToChip[ch];
   unsigned long now = millis();
 
   // vibrato LFO
@@ -224,69 +236,83 @@ void updatePitchMod(uint8_t ch) {
         * vibRangeSemi[ch];
   }
 
-  for (int v = 0; v < 3; v++) {
-    if (!voiceActive[chip][v] || voiceChan[chip][v] != ch) continue;
+  // Determine which chips to search based on poly mode
+  uint8_t startChip, endChip;
+  if (polyMode == 1) {
+    // FULL POLY: search all chips (voices can be anywhere)
+    startChip = 0;
+    endChip = 3;
+  } else {
+    // SEMI-POLY or MONO: only search assigned chip
+    startChip = midiToChip[ch];
+    endChip = startChip + 1;
+  }
 
-    // target period with pitch‑bend + vibrato
-    float base = noteToPeriod(voiceNote[chip][v]);
-    float tp   = base / powf(2.0f, (pitchBendSemis[ch] + lfo) / 12.0f);
+  for (uint8_t chip = startChip; chip < endChip; chip++) {
+    for (int v = 0; v < 3; v++) {
+      if (!voiceActive[chip][v] || voiceChan[chip][v] != ch) continue;
 
-    // pitch envelope
-    if (pitchEnvAmt[ch] > 0) {
-      pitchEnvPhase[ch] += pitchEnvIncrement[ch];
-      if (pitchEnvPhase[ch] > 1.0f) pitchEnvPhase[ch] = 1.0f;
-      float ev = (pitchEnvShape[ch] < 64)
-                   ? pitchEnvPhase[ch]
-                   : 1.0f - pitchEnvPhase[ch];
-      tp /= powf(2.0f, (pitchEnvAmt[ch] * ev) / 12.0f);
-    }
+      // target period with pitch‑bend + vibrato
+      float base = noteToPeriod(voiceNote[chip][v]);
+      float tp   = base / powf(2.0f, (pitchBendSemis[ch] + lfo) / 12.0f);
 
-    // one‑shot laser
-    if (laserTriggered[chip][v]) {
-      laserTriggered[chip][v] = false;
-      // curPeriod stays as set by noteOn()
-    }
-    // portamento slide
-    else if (portamentoOn[ch]) {
-      curPeriod[chip][v] += (tp - curPeriod[chip][v]) * portamentoSpeed[ch];
-    }
-    // immediate jump
-    else {
-      curPeriod[chip][v] = tp;
-    }
-
-    // Clamp period to valid range (avoid glitches from NaN/Inf/overflow)
-    if (curPeriod[chip][v] < 1.0f || curPeriod[chip][v] > 4095.0f) {
-      curPeriod[chip][v] = tp;  // Reset to target if out of bounds
-    }
-
-    // compute volume
-    uint16_t outP = uint16_t(curPeriod[chip][v] + 0.5f);
-    // Apply expression/CC11 with adjustable amount (0.0=bypass, 1.0=full effect)
-    uint8_t effectiveExpr = 127 - (uint8_t)((127 - expressionVal[ch]) * EXPRESSION_AMOUNT);
-    uint8_t vol = (voiceVol[chip][v] * effectiveExpr + 63) / 127;
-
-    // CC4 volume envelope
-#if USE_CC4_ENVELOPE
-    if (volEnvOn[ch]) {
-      if (volEnvDir[ch]) {
-        volEnvPhase[ch] += volEnvIncrement[ch];
-        if (volEnvPhase[ch] >= 1.0f) {
-          volEnvPhase[ch] = 1.0f;
-          volEnvOn[ch]    = false;
-        }
-      } else {
-        volEnvPhase[ch] -= volEnvIncrement[ch];
-        if (volEnvPhase[ch] <= 0.0f) {
-          volEnvPhase[ch] = 0.0f;
-          volEnvOn[ch]    = false;
-        }
+      // pitch envelope
+      if (pitchEnvAmt[ch] > 0) {
+        pitchEnvPhase[ch] += pitchEnvIncrement[ch];
+        if (pitchEnvPhase[ch] > 1.0f) pitchEnvPhase[ch] = 1.0f;
+        float ev = (pitchEnvShape[ch] < 64)
+                     ? pitchEnvPhase[ch]
+                     : 1.0f - pitchEnvPhase[ch];
+        tp /= powf(2.0f, (pitchEnvAmt[ch] * ev) / 12.0f);
       }
-      vol = uint8_t(vol * volEnvPhase[ch] + 0.5f);
-    }
+
+      // one‑shot laser
+      if (laserTriggered[chip][v]) {
+        laserTriggered[chip][v] = false;
+        // curPeriod stays as set by noteOn()
+      }
+      // portamento slide
+      else if (portamentoOn[ch]) {
+        curPeriod[chip][v] += (tp - curPeriod[chip][v]) * portamentoSpeed[ch];
+      }
+      // immediate jump
+      else {
+        curPeriod[chip][v] = tp;
+      }
+
+      // Clamp period to valid range (avoid glitches from NaN/Inf/overflow)
+      if (curPeriod[chip][v] < 1.0f || curPeriod[chip][v] > 4095.0f) {
+        curPeriod[chip][v] = tp;  // Reset to target if out of bounds
+      }
+
+      // compute volume
+      uint16_t outP = uint16_t(curPeriod[chip][v] + 0.5f);
+      // Apply expression/CC11 with adjustable amount (0.0=bypass, 1.0=full effect)
+      uint8_t effectiveExpr = 127 - (uint8_t)((127 - expressionVal[ch]) * EXPRESSION_AMOUNT);
+      uint8_t vol = (voiceVol[chip][v] * effectiveExpr + 63) / 127;
+
+      // CC4 volume envelope
+#if USE_CC4_ENVELOPE
+      if (volEnvOn[ch]) {
+        if (volEnvDir[ch]) {
+          volEnvPhase[ch] += volEnvIncrement[ch];
+          if (volEnvPhase[ch] >= 1.0f) {
+            volEnvPhase[ch] = 1.0f;
+            volEnvOn[ch]    = false;
+          }
+        } else {
+          volEnvPhase[ch] -= volEnvIncrement[ch];
+          if (volEnvPhase[ch] <= 0.0f) {
+            volEnvPhase[ch] = 0.0f;
+            volEnvOn[ch]    = false;
+          }
+        }
+        vol = uint8_t(vol * volEnvPhase[ch] + 0.5f);
+      }
 #endif
 
-    setVoice(chip, v, outP, vol);
+      setVoice(chip, v, outP, vol);
+    }
   }
 }
 
@@ -561,14 +587,18 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
       case 10:  pitchEnvShape[ch] = d2;                          break;
       case 64:  sustainOn[ch]     = (d2 >= 64);
                   if (!sustainOn[ch]) {
-                    uint8_t chip = midiToChip[ch];
-                    for (uint8_t v = 0; v < 3; v++) {
-                      if (pendingRelease[chip][v]
-                       && voiceActive[chip][v]
-                       && voiceChan[chip][v] == ch) {
-                        voiceActive[chip][v]   = false;
-                        stopVoice(chip, v);
-                        pendingRelease[chip][v] = false;
+                    // Release pending notes - search based on poly mode
+                    uint8_t startChip = (polyMode == 1) ? 0 : midiToChip[ch];
+                    uint8_t endChip = (polyMode == 1) ? 3 : startChip + 1;
+                    for (uint8_t chip = startChip; chip < endChip; chip++) {
+                      for (uint8_t v = 0; v < 3; v++) {
+                        if (pendingRelease[chip][v]
+                         && voiceActive[chip][v]
+                         && voiceChan[chip][v] == ch) {
+                          voiceActive[chip][v]   = false;
+                          stopVoice(chip, v);
+                          pendingRelease[chip][v] = false;
+                        }
                       }
                     }
                   }
@@ -576,11 +606,15 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
       case 65:  {
                   bool on = (d2 >= 64);
                   if (!on) {
-                    uint8_t chip = midiToChip[ch];
-                    for (uint8_t v = 0; v < 3; v++) {
-                      if (voiceActive[chip][v]
-                       && voiceChan[chip][v] == ch) {
-                        curPeriod[chip][v] = 0;
+                    // Reset portamento - search based on poly mode
+                    uint8_t startChip = (polyMode == 1) ? 0 : midiToChip[ch];
+                    uint8_t endChip = (polyMode == 1) ? 3 : startChip + 1;
+                    for (uint8_t chip = startChip; chip < endChip; chip++) {
+                      for (uint8_t v = 0; v < 3; v++) {
+                        if (voiceActive[chip][v]
+                         && voiceChan[chip][v] == ch) {
+                          curPeriod[chip][v] = 0;
+                        }
                       }
                     }
                   }
@@ -607,11 +641,14 @@ void handleMidiMsg(uint8_t status, uint8_t d1, uint8_t d2) {
                 break;
       case 123: // All Notes Off (respects sustain)
                 if (sustainOn[ch]) {
-                  // Mark all notes for release when sustain lifts
-                  uint8_t chip = midiToChip[ch];
-                  for (uint8_t v = 0; v < 3; v++) {
-                    if (voiceActive[chip][v] && voiceChan[chip][v] == ch) {
-                      pendingRelease[chip][v] = true;
+                  // Mark all notes for release when sustain lifts - search based on poly mode
+                  uint8_t startChip = (polyMode == 1) ? 0 : midiToChip[ch];
+                  uint8_t endChip = (polyMode == 1) ? 3 : startChip + 1;
+                  for (uint8_t chip = startChip; chip < endChip; chip++) {
+                    for (uint8_t v = 0; v < 3; v++) {
+                      if (voiceActive[chip][v] && voiceChan[chip][v] == ch) {
+                        pendingRelease[chip][v] = true;
+                      }
                     }
                   }
                 } else {
