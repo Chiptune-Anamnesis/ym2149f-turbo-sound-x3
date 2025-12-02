@@ -3,6 +3,7 @@
 #include <math.h>
 #include "YM2149.h"
 
+
 // Toggle YM file streaming via USB CDC
 #define USE_YMPLAYER_SERIAL 0
 #if USE_YMPLAYER_SERIAL
@@ -327,7 +328,18 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
     chip = 0xFF;  // Mark as not found
     v = 0xFF;
 
-    // First pass: look for any free voice across all chips
+    // First: check if this note is already playing on this channel (re-trigger)
+    for (uint8_t c = 0; c < 3; c++) {
+      for (uint8_t voice = 0; voice < 3; voice++) {
+        if (voiceActive[c][voice] && voiceChan[c][voice] == ch && voiceNote[c][voice] == note) {
+          chip = c;
+          v = voice;
+          goto voice_found;  // Reuse existing voice
+        }
+      }
+    }
+
+    // Second pass: look for any free voice across all chips
     for (uint8_t c = 0; c < 3; c++) {
       for (uint8_t voice = 0; voice < 3; voice++) {
         if (!voiceActive[c][voice]) {
@@ -348,8 +360,17 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   voice_found:;
   }
   else {
-    // ——— SEMI-POLYPHONY: search only assigned chip (current behavior) ———
+    // ——— SEMI-POLYPHONY: search only assigned chip ———
     chip = midiToChip[ch];
+
+    // First: check if this note is already playing on this channel (re-trigger)
+    for (v = 0; v < 3; v++) {
+      if (voiceActive[chip][v] && voiceChan[chip][v] == ch && voiceNote[chip][v] == note) {
+        goto voice_assigned;  // Reuse existing voice
+      }
+    }
+
+    // Second: find first free voice
     for (v = 0; v < 3; v++) {
       if (!voiceActive[chip][v]) break;
     }
@@ -357,6 +378,7 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
       v = nextVoice[chip];
       nextVoice[chip] = (v + 1) % 3;
     }
+  voice_assigned:;
   }
 
   // ——— assign voice parameters ———
