@@ -335,6 +335,11 @@ void noteOn(uint8_t ch, uint8_t note, uint8_t vel) {
   while (note < MIDI_NOTE_MIN) note += 12;
   while (note > MIDI_NOTE_MAX) note -= 12;
 
+  // ——— ensure period won't exceed YM2149's 12-bit limit (4095) ———
+  while (note <= MIDI_NOTE_MAX - 12 && noteToPeriod(note) > 4095) {
+    note += 12;
+  }
+
   // ——— start vibrato delay timer ———
   vibStartTime[ch] = millis();
   vibPhase[ch]     = 0;
@@ -482,6 +487,11 @@ void noteOff(uint8_t ch, uint8_t note) {
   // ——— transpose note to match noteOn transposition ———
   while (note < MIDI_NOTE_MIN) note += 12;
   while (note > MIDI_NOTE_MAX) note -= 12;
+
+  // ——— ensure period won't exceed YM2149's 12-bit limit (must match noteOn) ———
+  while (note <= MIDI_NOTE_MAX - 12 && noteToPeriod(note) > 4095) {
+    note += 12;
+  }
 
   // ——— sustain pedal logic for channels 1–9 ———
   if (sustainOn[ch]) {
