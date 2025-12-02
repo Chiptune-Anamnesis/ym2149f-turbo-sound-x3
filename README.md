@@ -243,23 +243,6 @@ The YM2149F has only 16 volume levels (0-15), which can make soft MIDI notes ina
 
 - Sostenuto Pedal (CC 66)
 Like sustain, but only for notes held at the moment you press the pedal.
-- Soft Pedal (CC 67)
-Map it to globally reduce volume or tweak envelope curves for a “muffled” effect.
-- Filter Cutoff (CC 74)
-Routing fine‐tuned volume curves or toggling between “bright” and “dark” lookup tables.
-- Resonance / Emphasis (CC 71)
-Emphasize higher harmonics by briefly boosting volume or switching to an “overdrive” lookup.
-- Release Time (CC 72)
-How quickly the volume envelope decays to zero after key-off.
-- Arpeggio Pattern Select (e.g. CC 18 or CC 19)
-Quickly switch between up/down, random, chord-hold, or custom progressions on the fly.
-- Arpeggio Speed / Gate (alternate CC)
-- Noise Level (CC 12 or CC 15)
-Control the volume of the noise channel (for percussion or wind-like effects).
-- Voice Balance (CC 13)
-Pan or fade between the three YM chips (e.g. chip 0 left, chip 1 center, chip 2 right) for a simple stereo spread.
-- Aftertouch / Channel Pressure
-Use poly- or channel-aftertouch to add real-time pitch bend, filter simulation, or envelope modulation keyed to how hard you press.
 
 ## Hardware
 https://hobbychop.com - YM2149F Turbo Sound x3
