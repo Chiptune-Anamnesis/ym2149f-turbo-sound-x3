@@ -39,12 +39,6 @@ const uint8_t midiToChip[9] = {0,0,0, 1,1,1, 2,2,2};
 
 const float YM_CLOCK_HZ = 2000000.0f;  // 2 MHz crystal
 
-// ——— placeholder tables ———
-// Paste your full tables here:
-const uint16_t freqTable[1281]        = { /* … */ };
-const uint16_t softFreqTable[1281]    = { /* … */ };
-const uint8_t  volumeEnvelopeTable[256] = { /* … */ };
-
 #if USE_YMPLAYER_SERIAL
   YMPlayerSerial player;
 #endif 
