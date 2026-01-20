@@ -67,9 +67,6 @@ Replaced slow `digitalWrite()` calls with optimized class methods
 - **3× YM2149F Chips**: Provides 9 independent tone voices (3 per chip).  
 - **MIDI Input**: Supports USB-MIDI (via MIDIUSB library) and TRS-serial MIDI (31250 baud).  
 - **Per-Channel Voice Routing**: Maps MIDI channels 1–9 to specific chip voices:  
-  - Channels 1–3 → Chip 0 voices A/B/C  
-  - Channels 4–6 → Chip 1 voices A/B/C  
-  - Channels 7–9 → Chip 2 voices A/B/C  
 - **Pitch Bend & Vibrato**: Standard pitch bend (±2 semitones) and CC1 mod-wheel vibrato.
 - **Other Standard CC**: Velocity, Expression, Portamento, Sweep, Envelope
 - **Drum Noise Channels**: (If enabled in Code: Disabled by Default) MIDI channels 10 trigger noise percussion on chip 2.  
